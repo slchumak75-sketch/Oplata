@@ -32,7 +32,8 @@ def main() -> int:
     ws = wb["2025"]
     assert ws["A4"].value == "ВСЕГО", ws["A4"].value
     assert ws["A5"].value == "ПОСТАВЩИК", ws["A5"].value
-    assert ws["B3"].value == "ЗАДОЛЖЕНОСТЬ", ws["B3"].value
+    # В оригинале написано «ЗАДОЛЖЕНОСТЬ» с одной Н; экспорт пишет орфографически правильно.
+    assert ws["B3"].value == "ЗАДОЛЖЕННОСТЬ", ws["B3"].value
     assert str(ws.freeze_panes) == "C5", ws.freeze_panes
 
     # Шапка дат: пары Собств/Выплаты от C до ABD (365 дат), дни 1..31 января.
