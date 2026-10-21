@@ -87,8 +87,8 @@ func TestDashboardAndMatrix(t *testing.T) {
 	}
 
 	m := BuildMatrix(db, 2025, 1)
-	if len(m.Days) != 31 || m.GrandYear != d.TotalDebtCents {
-		t.Fatalf("matrix days=%d grand=%d", len(m.Days), m.GrandYear)
+	if len(m.Days) != 31 || m.GrandRange != d.TotalDebtCents {
+		t.Fatalf("matrix days=%d grand=%d", len(m.Days), m.GrandRange)
 	}
 	if m.DayTotals[9].SobstvCents != 100_00 || m.DayTotals[9].VyplatyCents != 40_00 {
 		t.Fatalf("day totals 10.01: %+v", m.DayTotals[9])
@@ -96,6 +96,28 @@ func TestDashboardAndMatrix(t *testing.T) {
 	mFeb := BuildMatrix(db, 2025, 2)
 	if len(mFeb.Days) != 28 {
 		t.Fatalf("февраль 2025: %d дней", len(mFeb.Days))
+	}
+
+	// Недельный диапазон через BuildMatrixRange + календарь РБ.
+	// 2025-01-06 (пн) — переведённый выходной, 2025-01-07 — православное Рождество,
+	// 2025-01-11 — рабочая суббота, 2025-01-12 — воскресенье.
+	w := BuildMatrixRange(db, "2025-01-06", "2025-01-12")
+	if len(w.Days) != 7 || w.Days[0].Weekday != 1 || w.Days[6].Weekday != 7 {
+		t.Fatalf("неделя пн–вс: %+v", w.Days)
+	}
+	if !w.Days[0].IsDayOff || !w.Days[1].IsHoliday || w.Days[1].HolidayName == "" {
+		t.Fatalf("выходной/праздник: %+v %+v", w.Days[0], w.Days[1])
+	}
+	if w.Days[5].IsDayOff || !w.Days[5].IsWorkdayTransfer {
+		t.Fatalf("рабочая суббота 2025-01-11: %+v", w.Days[5])
+	}
+	if !w.Days[6].IsWeekend || !w.Days[6].IsDayOff {
+		t.Fatalf("воскресенье: %+v", w.Days[6])
+	}
+	// Диапазон через границу месяца: 30.01–02.02 — сегменты месяцев в днях.
+	x := BuildMatrixRange(db, "2025-01-30", "2025-02-02")
+	if len(x.Days) != 4 || x.Days[0].Month != 1 || x.Days[3].Month != 2 || x.Days[3].Year != 2025 {
+		t.Fatalf("граница месяцев: %+v", x.Days)
 	}
 
 	card := BuildSupplierCard(db, "s1", model.Date("2025-01-31"))

@@ -2,8 +2,6 @@
 *.exe
 *.dll
 dist/
-build/bin/
-desktop/build/bin/
 
 # Данные программы (никогда не должны попадать в git)
 data.json
@@ -22,6 +20,4 @@ Thumbs.db
 __pycache__/
 .venv/
 
-# Wails
-desktop/frontend/dist/
 node_modules/

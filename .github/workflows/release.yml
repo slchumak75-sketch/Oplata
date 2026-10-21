@@ -2,10 +2,9 @@ name: Release
 
 # Релиз создаётся автоматически при пуше тега вида v1.2.3:
 #   git tag v0.1.0 && git push origin v0.1.0
-# В релиз попадают: oplata.exe, oplata-console.exe, oplata-desktop.exe,
-# zip со всеми вариантами и SHA256SUMS.txt.
+# В релиз попадают: oplata.exe (единственный вариант приложения),
+# zip с ним и SHA256SUMS.txt.
 # Теги с суффиксом (v0.1.0-beta.1) помечаются как pre-release.
-# Если сборка Wails-варианта упадёт, релиз всё равно выйдет с браузерным вариантом.
 
 on:
   push:
@@ -32,7 +31,7 @@ jobs:
       - run: go test ./...
 
   build-windows:
-    name: Браузерный вариант (oplata.exe)
+    name: Сборка oplata.exe (Windows)
     needs: test
     runs-on: windows-latest
     defaults:
@@ -48,43 +47,16 @@ jobs:
         run: |
           mkdir -p dist
           go build -trimpath -ldflags "-s -w -H windowsgui -X main.version=${{ github.ref_name }}" -o dist/oplata.exe ./cmd/oplata
-          go build -trimpath -ldflags "-s -w -X main.version=${{ github.ref_name }}" -o dist/oplata-console.exe ./cmd/oplata
-          ./dist/oplata-console.exe -version
+          test -s dist/oplata.exe && head -c 2 dist/oplata.exe | grep -q MZ
       - uses: actions/upload-artifact@v7
         with:
           name: oplata-windows-amd64
           path: dist/
           if-no-files-found: error
 
-  build-desktop:
-    name: Десктопный вариант Wails
-    needs: test
-    runs-on: windows-latest
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: false
-      - name: Сборка
-        working-directory: desktop
-        run: |
-          go mod tidy
-          mkdir -p ../dist
-          go build -trimpath -ldflags "-s -w -H windowsgui -X main.version=${{ github.ref_name }}" -o ../dist/oplata-desktop.exe .
-      - uses: actions/upload-artifact@v7
-        with:
-          name: oplata-desktop-amd64
-          path: dist/oplata-desktop.exe
-          if-no-files-found: error
-
   release:
     name: GitHub Release
-    needs: [build-windows, build-desktop]
-    if: ${{ always() && needs.build-windows.result == 'success' }}
+    needs: [build-windows]
     runs-on: windows-latest
     steps:
       - uses: actions/download-artifact@v8
@@ -92,7 +64,7 @@ jobs:
           pattern: oplata-*
           path: dist
           merge-multiple: true
-      - name: ZIP-архив со всеми вариантами + контрольные суммы
+      - name: ZIP-архив + контрольные суммы
         shell: pwsh
         run: |
           # Список файлов фиксируем ДО записи SHA256SUMS.txt и сам файл сумм исключаем:
@@ -117,10 +89,8 @@ jobs:
 
             | Файл | Что это |
             |---|---|
-            | **oplata.exe** | Основной вариант: открывает интерфейс в окне Edge/браузера. Установка не нужна — просто запустите. |
-            | **oplata-desktop.exe** | Тот же интерфейс в отдельном окне Windows (нужен WebView2, есть в Windows 11). Может отсутствовать, если его сборка не удалась. |
-            | **oplata-console.exe** | Тот же, что oplata.exe, но с консолью (диагностика, серверный режим, флаги `-addr`, `-data`, `-no-open`). |
-            | **oplata-…-windows-amd64.zip** | Все варианты одним архивом. |
+            | **oplata.exe** | Приложение «Оплаты»: открывает интерфейс в окне Edge/браузера. Установка не нужна — просто запустите. Флаги запуска: `-addr`, `-data`, `-portable`, `-no-open`, `-no-seed`, `-version` (подробности и журнал — в `oplata.log` рядом с данными). |
+            | **oplata-…-windows-amd64.zip** | Тот же oplata.exe одним архивом. |
 
             Данные хранятся в `%AppData%\Oplata\data.json`. При первом запуске загружены стартовые данные из Excel за 2025 год (можно очистить на вкладке «Данные» или заменить импортом своего файла).
           files: |

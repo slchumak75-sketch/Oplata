@@ -545,10 +545,31 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMatrix(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	// Основной режим вкладки «Таблица»: произвольный диапазон дат (недели пн–вс).
+	if q.Get("from") != "" || q.Get("to") != "" {
+		from, to := model.Date(q.Get("from")), model.Date(q.Get("to"))
+		if !from.Valid() || !to.Valid() {
+			writeErr(w, http.StatusBadRequest, "нужны корректные даты from и to (гггг-мм-дд)")
+			return
+		}
+		if to < from {
+			writeErr(w, http.StatusBadRequest, "дата to раньше даты from")
+			return
+		}
+		if days := int(to.Time().Sub(from.Time()).Hours()/24) + 1; days > 371 { // не больше 53 недель
+			writeErr(w, http.StatusBadRequest, "диапазон слишком большой (максимум 371 день)")
+			return
+		}
+		db := s.Store.Snapshot()
+		writeJSON(w, http.StatusOK, calc.BuildMatrixRange(db, from, to))
+		return
+	}
+	// Совместимость: режим «год + месяц».
 	now := model.Today()
 	defYear, defMonth := now.YearMonth()
 	year, month := defYear, defMonth
-	if v := r.URL.Query().Get("year"); v != "" {
+	if v := q.Get("year"); v != "" {
 		y, err := strconv.Atoi(v)
 		if err != nil || y < 1900 || y > 2200 {
 			writeErr(w, http.StatusBadRequest, "некорректный год")
@@ -556,7 +577,7 @@ func (s *Server) handleMatrix(w http.ResponseWriter, r *http.Request) {
 		}
 		year = y
 	}
-	if v := r.URL.Query().Get("month"); v != "" {
+	if v := q.Get("month"); v != "" {
 		m, err := strconv.Atoi(v)
 		if err != nil || m < 1 || m > 12 {
 			writeErr(w, http.StatusBadRequest, "некорректный месяц (1..12)")

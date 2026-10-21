@@ -1,9 +1,9 @@
 name: CI
 
 # Сборка и тесты при каждом push и в pull request'ах.
-# Артефакты (скачиваются со страницы запуска во вкладке Actions):
-#   - oplata-windows-amd64  : oplata.exe (GUI, браузерный вариант) + oplata-console.exe
-#   - oplata-desktop-amd64  : oplata-desktop.exe (Wails, окно Windows)
+# Артефакт (скачивается со страницы запуска во вкладке Actions):
+#   - oplata-windows-amd64  : oplata.exe — единственный вариант приложения
+#     (решение владельца от 2026-10-21: console- и Wails-варианты отброшены).
 # Релизы по тегам v* делает .github/workflows/release.yml.
 
 on:
@@ -65,7 +65,7 @@ jobs:
           GOOS=windows GOARCH=amd64 go build -trimpath -o /tmp/oplata-check.exe ./cmd/oplata
 
   build-windows:
-    name: Браузерный вариант (oplata.exe)
+    name: Сборка oplata.exe (Windows)
     needs: test
     runs-on: windows-latest
     defaults:
@@ -79,66 +79,20 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: false
-      - name: Сборка oplata.exe и oplata-console.exe
+      - name: Сборка oplata.exe
         run: |
           VERSION="$(git describe --tags --always 2>/dev/null || echo dev)"
           echo "Версия: $VERSION"
           mkdir -p dist
           go build -trimpath -ldflags "-s -w -H windowsgui -X main.version=$VERSION" -o dist/oplata.exe ./cmd/oplata
-          go build -trimpath -ldflags "-s -w -X main.version=$VERSION" -o dist/oplata-console.exe ./cmd/oplata
           ls -lh dist/
-      - name: Дымовой тест (консольный exe отвечает -version)
-        run: ./dist/oplata-console.exe -version
+      - name: Проверка артефакта (PE-заголовок и размер)
+        run: |
+          test -s dist/oplata.exe
+          head -c 2 dist/oplata.exe | grep -q MZ
       - uses: actions/upload-artifact@v7
         with:
           name: oplata-windows-amd64
           path: dist/
           if-no-files-found: error
 
-  build-desktop:
-    name: Десктопный вариант Wails (oplata-desktop.exe)
-    needs: test
-    runs-on: windows-latest
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-go@v7
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: false
-      - name: Зависимости desktop-модуля
-        working-directory: desktop
-        run: |
-          # go.sum в репозитории может отсутствовать (см. AGENTS.md): генерируем на месте.
-          go mod tidy
-          # Диагностика окружения сборки Wails в аннотациях (логи не всегда под рукой).
-          echo "::notice title=desktop env::go=$(go version) CGO_ENABLED=$(go env CGO_ENABLED) CC=$(go env CC) gcc=$(command -v gcc || echo MISSING)"
-      - name: gofmt (desktop)
-        working-directory: desktop
-        run: |
-          files=$(gofmt -l .)
-          if [ -n "$files" ]; then
-            echo "::error title=gofmt desktop::Не отформатированы: $files"
-            gofmt -d . | head -100 | sed 's/^/::notice title=gofmt diff::/' || true
-            exit 1
-          fi
-      - name: go vet (desktop)
-        working-directory: desktop
-        run: go vet ./...
-      - name: Сборка oplata-desktop.exe
-        working-directory: desktop
-        run: |
-          VERSION="$(git describe --tags --always 2>/dev/null || echo dev)"
-          echo "Версия: $VERSION"
-          mkdir -p ../dist
-          go build -trimpath -ldflags "-s -w -H windowsgui -X main.version=$VERSION" -o ../dist/oplata-desktop.exe .
-          ls -lh ../dist/
-      - uses: actions/upload-artifact@v7
-        with:
-          name: oplata-desktop-amd64
-          path: dist/oplata-desktop.exe
-          if-no-files-found: error

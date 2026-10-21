@@ -270,20 +270,32 @@ func BuildDashboard(db *model.DB, asOf model.Date) Dashboard {
 	return d
 }
 
-// Matrix — таблица «как в Excel» за один месяц: поставщики × дни, пара (Собств, Выплаты) в день.
+// Matrix — таблица «как в Excel»: поставщики × дни диапазона, пара (Собств, Выплаты) в день.
+// Диапазон задаётся вызывающим кодом: вкладка «Таблица» показывает целиком недели
+// (понедельник–воскресенье), месяц — отдельной строкой шапки над датами.
 type Matrix struct {
-	Year      int         `json:"year"`
-	Month     int         `json:"month"`
-	Days      []MatrixDay `json:"days"`
-	Rows      []MatrixRow `json:"rows"`
-	DayTotals []DayTotal  `json:"day_totals"`       // строка «ВСЕГО» (строка 4 Excel)
-	GrandYear int64       `json:"grand_year_cents"` // сумма столбца B за выбранный год (все поставщики)
+	From       model.Date  `json:"from"`
+	To         model.Date  `json:"to"`
+	Year       int         `json:"year"`  // для совместимости: год границы From
+	Month      int         `json:"month"` // для совместимости: месяц границы From
+	Days       []MatrixDay `json:"days"`
+	Rows       []MatrixRow `json:"rows"`
+	DayTotals  []DayTotal  `json:"day_totals"`        // строка «ВСЕГО» (строка 4 Excel)
+	GrandRange int64       `json:"grand_range_cents"` // сумма столбца B по всем поставщикам за диапазон
 }
 
-// MatrixDay — один календарный день месяца.
+// MatrixDay — один календарный день диапазона + сведения рабочего календаря РБ.
 type MatrixDay struct {
-	Date model.Date `json:"date"`
-	Day  int        `json:"day"`
+	Date              model.Date `json:"date"`
+	Day               int        `json:"day"`
+	Month             int        `json:"month"` // 1–12
+	Year              int        `json:"year"`
+	Weekday           int        `json:"weekday"`             // 1 = понедельник … 7 = воскресенье
+	IsWeekend         bool       `json:"is_weekend"`          // суббота/воскресенье по календарю
+	IsHoliday         bool       `json:"is_holiday"`          // государственный праздник РБ
+	IsDayOff          bool       `json:"is_day_off"`          // нерабочий день с учётом переносов (бежевый столбец)
+	HolidayName       string     `json:"holiday_name"`        // название праздника / причина выходного
+	IsWorkdayTransfer bool       `json:"is_workday_transfer"` // рабочая суббота (перенос рабочего дня)
 }
 
 // DayTotal — итоги всех поставщиков за день.
@@ -302,70 +314,87 @@ type MatrixCell struct {
 // MatrixRow — строка поставщика.
 type MatrixRow struct {
 	Supplier model.Supplier `json:"supplier"`
-	// YearBalanceCents — столбец B: сумма по строке за выбранный год (Собств − Выплаты).
-	YearBalanceCents int64 `json:"year_balance_cents"`
+	// RangeBalanceCents — столбец B: сумма по строке за выбранный диапазон (Собств − Выплаты).
+	RangeBalanceCents int64 `json:"range_balance_cents"`
 	// BalanceCents — фактическая задолженность за всё время (все годы).
 	BalanceCents int64        `json:"balance_cents"`
-	Cells        []MatrixCell `json:"cells"` // только непустые дни месяца
+	Cells        []MatrixCell `json:"cells"` // только непустые дни диапазона
 }
 
-// BuildMatrix строит матрицу за месяц year-month. Дни месяца вычисляются по календарю.
-func BuildMatrix(db *model.DB, year, month int) Matrix {
-	// Последний день месяца: нулевой день следующего месяца.
-	daysInMonth := time.Date(year, time.Month(month)+1, 0, 0, 0, 0, 0, time.UTC).Day()
-
-	m := Matrix{Year: year, Month: month, Days: []MatrixDay{}, Rows: []MatrixRow{}}
-	for d := 1; d <= daysInMonth; d++ {
-		m.Days = append(m.Days, MatrixDay{Date: model.Date(dateStr(year, month, d)), Day: d})
+// BuildMatrixRange строит матрицу за произвольный диапазон дат [from, to] включительно.
+// Каждый день сопровождается календарём РБ (выходные/праздники/переносы) для подсветки.
+func BuildMatrixRange(db *model.DB, from, to model.Date) Matrix {
+	if to < from {
+		from, to = to, from
+	}
+	fy, fm := from.YearMonth()
+	m := Matrix{From: from, To: to, Year: fy, Month: fm, Days: []MatrixDay{}, Rows: []MatrixRow{}}
+	dayIndex := make(map[model.Date]int)
+	for d := from; ; d = d.AddDays(1) {
+		year, month := d.YearMonth()
+		dayOff, offName := DayOffInfo(d)
+		holidayName, isHoliday := HolidayName(d)
+		name := offName
+		if isHoliday {
+			name = holidayName
+		}
+		dayIndex[d] = len(m.Days)
+		m.Days = append(m.Days, MatrixDay{
+			Date: d, Day: d.Time().Day(), Month: month, Year: year,
+			Weekday: WeekdayMon1(d), IsWeekend: IsWeekend(d),
+			IsHoliday: isHoliday, IsDayOff: dayOff, HolidayName: name,
+			IsWorkdayTransfer: IsWorkingSaturday(d),
+		})
+		if d >= to {
+			break
+		}
 	}
 	m.DayTotals = make([]DayTotal, len(m.Days))
 
 	obs, pays := BySupplier(db)
 	for _, s := range db.Suppliers {
 		row := MatrixRow{Supplier: s, Cells: []MatrixCell{}}
-		byDay := make(map[int]*MatrixCell)
+		byDate := make(map[model.Date]*MatrixCell)
 		for _, o := range obs[s.ID] {
-			y, mo := o.DueDate.YearMonth()
-			if y == year {
-				row.YearBalanceCents += o.AmountCents
-				if mo == month {
-					c := cellFor(byDay, o.DueDate)
-					c.SobstvCents += o.AmountCents
-					m.DayTotals[o.DueDate.Time().Day()-1].SobstvCents += o.AmountCents
-				}
+			if idx, ok := dayIndex[o.DueDate]; ok {
+				row.RangeBalanceCents += o.AmountCents
+				cellFor(byDate, o.DueDate).SobstvCents += o.AmountCents
+				m.DayTotals[idx].SobstvCents += o.AmountCents
 			}
 			row.BalanceCents += o.AmountCents
 		}
 		for _, p := range pays[s.ID] {
-			y, mo := p.Date.YearMonth()
-			if y == year {
-				row.YearBalanceCents -= p.AmountCents
-				if mo == month {
-					c := cellFor(byDay, p.Date)
-					c.VyplatyCents += p.AmountCents
-					m.DayTotals[p.Date.Time().Day()-1].VyplatyCents += p.AmountCents
-				}
+			if idx, ok := dayIndex[p.Date]; ok {
+				row.RangeBalanceCents -= p.AmountCents
+				cellFor(byDate, p.Date).VyplatyCents += p.AmountCents
+				m.DayTotals[idx].VyplatyCents += p.AmountCents
 			}
 			row.BalanceCents -= p.AmountCents
 		}
-		for d := 1; d <= int(daysInMonth); d++ {
-			if c, ok := byDay[d]; ok {
+		for _, md := range m.Days {
+			if c, ok := byDate[md.Date]; ok {
 				row.Cells = append(row.Cells, *c)
 			}
 		}
-		m.GrandYear += row.YearBalanceCents
+		m.GrandRange += row.RangeBalanceCents
 		m.Rows = append(m.Rows, row)
 	}
 	return m
 }
 
-func cellFor(byDay map[int]*MatrixCell, date model.Date) *MatrixCell {
-	d := date.Time().Day()
-	if c, ok := byDay[d]; ok {
+// BuildMatrix строит матрицу за месяц year-month (совместимость; обёртка BuildMatrixRange).
+func BuildMatrix(db *model.DB, year, month int) Matrix {
+	// Последний день месяца: нулевой день следующего месяца.
+	last := time.Date(year, time.Month(month)+1, 0, 0, 0, 0, 0, time.UTC).Day()
+	return BuildMatrixRange(db, model.Date(dateStr(year, month, 1)), model.Date(dateStr(year, month, last)))
+}
+
+func cellFor(byDate map[model.Date]*MatrixCell, date model.Date) *MatrixCell {
+	if c, ok := byDate[date]; ok {
 		return c
 	}
 	c := &MatrixCell{Date: date}
-	byDay[d] = c
+	byDate[date] = c
 	return c
 }
 
