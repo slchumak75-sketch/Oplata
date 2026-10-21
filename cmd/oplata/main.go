@@ -123,8 +123,7 @@ func listenWithFallback(addr string) (net.Listener, string, error) {
 	if err != nil {
 		return nil, "", err
 	}
-	basePort := 0
-	fmt.Sscanf(portStr, "%d", &basePort)
+	basePort, _ := strconv.Atoi(portStr)
 	for delta := 0; delta <= 20; delta++ {
 		port := basePort + delta
 		if delta == 20 {

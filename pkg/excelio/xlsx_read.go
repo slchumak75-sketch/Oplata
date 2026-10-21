@@ -260,7 +260,7 @@ func readSheet(f *zip.File, shared []string) (*grid, error) {
 	curRow, curCol := 0, 0
 	var cellType string
 	var valBuf, inlineBuf strings.Builder
-	inV, inInlineT, hasF := false, false, false
+	inV, inInlineT := false, false
 
 	flushCell := func() {
 		raw := strings.TrimSpace(valBuf.String())

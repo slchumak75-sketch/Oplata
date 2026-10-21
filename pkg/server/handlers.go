@@ -302,7 +302,6 @@ func (s *Server) handleObligationUpdate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	var updated model.Obligation
-	found := false
 	err := s.Store.Update(func(db *model.DB) error {
 		for i := range db.Obligations {
 			if db.Obligations[i].ID == id {
@@ -313,7 +312,6 @@ func (s *Server) handleObligationUpdate(w http.ResponseWriter, r *http.Request) 
 				o.ID = id
 				db.Obligations[i] = o
 				updated = o
-				found = true
 				return nil
 			}
 		}
@@ -323,7 +321,6 @@ func (s *Server) handleObligationUpdate(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, statusForErr(err), err.Error())
 		return
 	}
-	_ = found
 	writeJSON(w, http.StatusOK, updated)
 }
 

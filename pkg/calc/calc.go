@@ -9,7 +9,9 @@
 package calc
 
 import (
+	"fmt"
 	"slices"
+	"time"
 
 	"github.com/slchumak75-sketch/oplata/pkg/model"
 )
@@ -439,7 +441,7 @@ func BuildSupplierCard(db *model.DB, supplierID string, asOf model.Date) *Suppli
 	return card
 }
 
-func dateStr(y, m, d int) string { return model.FromTime(mkTime(y, m, d)).String() }
+func dateStr(y, m, d int) string { return fmt.Sprintf("%04d-%02d-%02d", y, m, d) }
 
 func compareStr(a, b string) int {
 	switch {
