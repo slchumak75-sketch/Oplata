@@ -1,0 +1,11 @@
+# Дисциплина окончаний строк: весь текст в репозитории — LF на любой ОС.
+# Без этого checkout на Windows-раннерах GitHub Actions конвертирует .go в CRLF,
+# и gofmt помечает каждый файл как неотформатированный (был такой инцидент в CI).
+* text=auto eol=lf
+
+# Бинарные файлы не трогать.
+*.png binary
+*.xlsx binary
+*.ico binary
+*.exe binary
+*.zip binary

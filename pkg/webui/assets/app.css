@@ -1,0 +1,140 @@
+/* Оплаты — стили GUI. Без внешних шрифтов и библиотек (офлайн). */
+:root{
+  --bg:#f3f5f9; --panel:#fff; --text:#17202b; --muted:#68707d; --line:#dbe1ea;
+  --blue:#2563eb; --blue-dark:#1d4ed8; --green:#15803d; --red:#dc2626; --red-bg:#fef2f2;
+  --amber:#b45309; --amber-bg:#fffbeb; --green-bg:#f0fdf4; --blue-bg:#eff6ff;
+  --radius:10px; --shadow:0 8px 30px rgba(15,23,42,.14);
+}
+*{box-sizing:border-box}
+html,body{margin:0;padding:0}
+body{font-family:"Segoe UI",system-ui,-apple-system,Arial,sans-serif;background:var(--bg);color:var(--text);font-size:14px}
+a{color:var(--blue)}
+button,input,select,textarea{font:inherit}
+.hidden{display:none!important}
+.muted{color:var(--muted)}
+.num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
+.center{text-align:center}
+.nowrap{white-space:nowrap}
+
+/* Шапка */
+.app-header{position:sticky;top:0;z-index:50;display:flex;align-items:center;gap:18px;
+  padding:8px 16px;background:#0f2a5c;color:#fff;box-shadow:0 2px 10px rgba(15,23,42,.25);flex-wrap:wrap}
+.brand-title{font-size:19px;font-weight:700;line-height:1.1}
+.brand-sub{font-size:12px;opacity:.8}
+.tabs{display:flex;gap:4px;flex:1;flex-wrap:wrap}
+.tabs a{color:#dbeafe;text-decoration:none;padding:7px 13px;border-radius:8px;font-weight:600}
+.tabs a:hover{background:rgba(255,255,255,.14)}
+.tabs a.active{background:#fff;color:#0f2a5c}
+.header-actions{display:flex;gap:8px}
+
+/* Кнопки */
+.btn{border:1px solid var(--line);background:#fff;color:var(--text);border-radius:8px;padding:6px 12px;cursor:pointer;font-weight:600}
+.btn:hover{filter:brightness(.97)}
+.btn-primary{background:var(--blue);border-color:var(--blue);color:#fff}
+.btn-primary:hover{background:var(--blue-dark)}
+.btn-success{background:var(--green);border-color:var(--green);color:#fff}
+.btn-danger{background:var(--red);border-color:var(--red);color:#fff}
+.btn-ghost{border-color:transparent;background:transparent;color:var(--blue);padding:4px 7px}
+.btn-small{padding:3px 8px;font-size:12.5px;border-radius:6px}
+.btn:disabled{opacity:.55;cursor:not-allowed}
+
+/* Предупреждения импорта */
+.warnings{margin:12px 16px 0;padding:10px 14px;background:var(--amber-bg);border:1px solid #fcd34d;border-radius:var(--radius)}
+.warnings h4{margin:0 0 6px}
+.warnings ul{margin:0 0 8px;padding-left:20px}
+
+/* Контент */
+.view{padding:16px;max-width:100%}
+.loading{padding:40px;text-align:center;color:var(--muted)}
+.panel{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px;margin-bottom:14px}
+.panel h2,.panel h3{margin:0 0 10px}
+.toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+.toolbar .spacer{flex:1}
+input[type=text],input[type=date],input[type=number],input[type=file],select,textarea{
+  border:1px solid var(--line);border-radius:8px;padding:6px 9px;background:#fff;max-width:100%}
+input[type=text].money{font-variant-numeric:tabular-nums;text-align:right}
+label.field{display:flex;flex-direction:column;gap:4px;font-weight:600;font-size:12.5px;color:#334155}
+label.field .hint{font-weight:400;color:var(--muted);font-size:12px}
+
+/* Карточки сводки */
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:12px;margin-bottom:14px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:13px 14px}
+.card .label{color:var(--muted);font-size:12.5px;font-weight:600;text-transform:uppercase;letter-spacing:.03em}
+.card .value{font-size:22px;font-weight:750;margin-top:3px;font-variant-numeric:tabular-nums}
+.card.red{border-color:#fecaca;background:var(--red-bg)}
+.card.red .value{color:var(--red)}
+.card.amber{border-color:#fde68a;background:var(--amber-bg)}
+.card.amber .value{color:var(--amber)}
+.card.green .value{color:var(--green)}
+
+/* Таблицы */
+.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:var(--radius);background:#fff}
+table.data{border-collapse:collapse;width:100%}
+table.data th,table.data td{padding:6px 9px;border-bottom:1px solid var(--line);vertical-align:top}
+table.data thead th{background:#eef2f7;text-align:left;position:sticky;top:0;z-index:2}
+table.data tbody tr:hover{background:#f8fafc}
+table.data tr.total td{background:#eef2f7;font-weight:700}
+table.data td.overdue{color:var(--red);font-weight:700}
+.clickable{cursor:pointer}
+.clickable:hover{text-decoration:underline}
+
+/* Матрица как в Excel */
+.matrix-wrap{overflow:auto;max-height:calc(100vh - 235px);border:1px solid var(--line);border-radius:var(--radius);background:#fff}
+table.matrix{border-collapse:separate;border-spacing:0;font-size:12px}
+table.matrix th,table.matrix td{border-right:1px solid #e5e9f0;border-bottom:1px solid #e5e9f0;padding:3px 5px;min-width:64px}
+table.matrix thead th{background:#eef2f7;text-align:center;position:sticky;z-index:4}
+table.matrix thead tr.days th{top:0;background:#fde8e8}
+table.matrix thead tr.kinds th{top:25px;font-size:10.5px;color:#475569}
+table.matrix th.sticky-1,table.matrix td.sticky-1{position:sticky;left:0;z-index:3;background:#fff;min-width:170px;max-width:220px}
+table.matrix th.sticky-2,table.matrix td.sticky-2{position:sticky;left:170px;z-index:3;background:#f8fafc;min-width:92px}
+table.matrix thead th.sticky-1,table.matrix thead th.sticky-2{z-index:6;background:#dbe4f0}
+table.matrix td.cell{cursor:pointer}
+table.matrix td.cell:hover{background:var(--blue-bg)}
+table.matrix td.today{background:#fff7db}
+table.matrix td.vyplaty{color:var(--green)}
+table.matrix tr.total td{background:#eef2f7;font-weight:700}
+table.matrix td.neg{color:var(--red)}
+
+/* Бейджи статусов */
+.badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11.5px;font-weight:700;white-space:nowrap}
+.badge.paid{background:#dcfce7;color:#166534}
+.badge.partial{background:#dbeafe;color:#1e40af}
+.badge.overdue{background:#fee2e2;color:#991b1b}
+.badge.pending{background:#e2e8f0;color:#475569}
+.badge.due_soon{background:#fef3c7;color:#92400e}
+
+/* Модалки */
+.modal-backdrop{position:fixed;inset:0;background:rgba(15,23,42,.48);display:flex;align-items:flex-start;justify-content:center;z-index:100;padding:28px 12px;overflow:auto}
+.modal{background:#fff;border-radius:12px;box-shadow:var(--shadow);width:560px;max-width:100%;padding:18px}
+.modal.wide{width:760px}
+.modal h3{margin:0 0 12px}
+.form-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.form-grid .full{grid-column:1/-1}
+.modal-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:16px;flex-wrap:wrap}
+.form-error{background:var(--red-bg);border:1px solid #fecaca;color:#991b1b;border-radius:8px;padding:8px 10px;margin-bottom:10px}
+
+/* Тосты */
+.toasts{position:fixed;right:14px;bottom:14px;display:flex;flex-direction:column;gap:8px;z-index:200}
+.toast{background:#17202b;color:#fff;border-radius:8px;padding:10px 14px;box-shadow:var(--shadow);max-width:420px}
+.toast.error{background:#991b1b}
+.toast.ok{background:#166534}
+
+.app-footer{padding:10px 16px 22px;color:var(--muted);display:flex;gap:18px;flex-wrap:wrap;font-size:12.5px}
+.chart{width:100%;height:170px;background:#fbfcfe;border:1px solid var(--line);border-radius:8px}
+.kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:8px;margin-bottom:10px}
+.kv div{background:#f8fafc;border:1px solid var(--line);border-radius:8px;padding:8px 10px}
+.kv .k{color:var(--muted);font-size:12px;font-weight:600}
+.kv .v{font-size:16px;font-weight:700;font-variant-numeric:tabular-nums}
+.danger-zone{border-color:#fecaca}
+
+/* Печать: только содержимое экрана */
+@media print{
+  .app-header,.app-footer,.toolbar,.warnings,.header-actions,.toasts{display:none!important}
+  body{background:#fff}
+  .view{padding:0}
+  .matrix-wrap,.table-wrap{max-height:none;overflow:visible;border:none}
+}
+@media (max-width:720px){
+  .form-grid{grid-template-columns:1fr}
+  .card .value{font-size:18px}
+}
