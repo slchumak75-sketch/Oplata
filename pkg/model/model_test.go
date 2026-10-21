@@ -33,7 +33,7 @@ func TestCentsFormatting(t *testing.T) {
 	}
 }
 
-func TestUNPAndBuyers(t *testing.T) {
+func TestBuyerUNP(t *testing.T) {
 	if got := NormalizeUNP(" 123 456 789 "); got != "123456789" {
 		t.Fatalf("NormalizeUNP=%q", got)
 	}
@@ -56,14 +56,6 @@ func TestUNPAndBuyers(t *testing.T) {
 	db.Buyers = append(db.Buyers, Buyer{ID: "b2", Name: "Другой", UNP: "123456789"})
 	if err := db.Validate(); err == nil {
 		t.Fatal("дублирующийся УНП покупателей должен отвергаться")
-	}
-	db.Buyers = nil
-	db.Suppliers = []Supplier{
-		{ID: "s1", Name: "АВИДО", UNP: "123456789"},
-		{ID: "s2", Name: "МАВ", UNP: "123456789"},
-	}
-	if err := db.Validate(); err == nil {
-		t.Fatal("дублирующийся УНП поставщиков должен отвергаться")
 	}
 }
 

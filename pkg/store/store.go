@@ -75,15 +75,15 @@ func Open(path string) (*Store, error) {
 }
 
 // Decode разбирает и валидирует JSON базы. Пустые срезы нормализуются в [] (не null в API).
-// Здесь же живут миграции формата: v1 -> v2 добавляет пустой справочник покупателей
-// и пустой УНП у поставщиков; v2 -> v3 добавляет необязательную разбивку начислений
-// по НДС (все новые поля просто отсутствуют в старом JSON).
+// Здесь же живут миграции формата: v1 -> v2 добавляет пустой справочник покупателей;
+// v2 -> v3 добавляет необязательную разбивку начислений по НДС; v3 -> v4 удаляет
+// Supplier.UNP (поле старого JSON просто игнорируется при Unmarshal).
 func Decode(data []byte) (*model.DB, error) {
 	var db model.DB
 	if err := json.Unmarshal(data, &db); err != nil {
 		return nil, err
 	}
-	if db.Version == 1 || db.Version == 2 {
+	if db.Version >= 1 && db.Version < model.SchemaVersion {
 		db.Version = model.SchemaVersion
 	}
 	if db.Suppliers == nil {
