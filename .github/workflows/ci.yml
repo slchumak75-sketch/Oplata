@@ -44,9 +44,15 @@ jobs:
       - name: Экспорт XLSX открывается сторонним openpyxl и сверяется с оригиналом
         run: |
           # Вывод дублируем в аннотации: полные логи Actions не всегда доступны оператору.
+          # set +e обязателен: шаги Actions запускаются с bash -e и оборвут вывод диагностики.
+          set +e
           report_fail() { sed 's/^/::error title=verify-export::/' "$1" | head -40; }
-          (python3 -m pip install --quiet openpyxl || python3 -m pip install --quiet --break-system-packages openpyxl || pip3 install --quiet --break-system-packages openpyxl) > /tmp/pip.out 2>&1 || { report_fail /tmp/pip.out; exit 1; }
-          go run ./tools/exportdemo /tmp/oplata-2025.xlsx > /tmp/export.out 2>&1 || { report_fail /tmp/export.out; exit 1; }
+          python3 -m pip install --quiet openpyxl > /tmp/pip.out 2>&1
+          if [ $? -ne 0 ]; then python3 -m pip install --quiet --break-system-packages openpyxl >> /tmp/pip.out 2>&1; fi
+          if [ $? -ne 0 ]; then pip3 install --quiet --break-system-packages openpyxl >> /tmp/pip.out 2>&1; fi
+          if [ $? -ne 0 ]; then report_fail /tmp/pip.out; exit 1; fi
+          go run ./tools/exportdemo /tmp/oplata-2025.xlsx > /tmp/export.out 2>&1
+          if [ $? -ne 0 ]; then report_fail /tmp/export.out; exit 1; fi
           cat /tmp/export.out
           python3 tools/verify_export.py /tmp/oplata-2025.xlsx > /tmp/verify.out 2>&1; code=$?
           cat /tmp/verify.out
