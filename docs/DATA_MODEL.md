@@ -79,14 +79,17 @@ IDs: `sup-/obl-/pay-/buy-` + 12 hex-символов (`crypto/rand`); в seed �
   «срок сегодня» — открытые с `due_date = asOf`; «7 дней» — `(asOf, asOf+7]`;
   обороты месяца считаются по месяцу `asOf` (начисления по `due_date`, выплаты по `date`);
   списки просроченных (по убыванию дней просрочки) и ближайших сроков (14 дней).
-- **Матрица** (`BuildMatrix`) за месяц: суммы по (поставщик, дата); `year_balance_cents` —
-  сумма по году колонки B; `balance_cents` — задолженность за всё время (подсказка в GUI).
+- **Матрица** (`BuildMatrixRange(from, to)`; `BuildMatrix(year, month)` — совместимая
+  обёртка): суммы по (поставщик, дата) за диапазон; каждый день несёт календарь РБ
+  (`weekday` 1=пн…7=вс, `is_day_off` с учётом переносов, `holiday_name` — из
+  `pkg/calc/holidays.go`); `range_balance_cents` — сумма колонки B за диапазон;
+  `balance_cents` — задолженность за всё время (подсказка в GUI).
 - **Карточка** (`BuildSupplierCard`): FIFO-состояния, выплаты по дате, нарастающий баланс
   по хронологии событий (начисление датой `due_date`, выплата датой `date`).
 
 ## HTTP API (`pkg/server`)
 
-База: `http://127.0.0.1:<порт>` (браузерный вариант) или AssetServer Wails. Ответы — JSON
+База: `http://127.0.0.1:<порт>`. Ответы — JSON
 (`{"error": "…"}` при ошибке, тексты на русском — они показываются пользователю).
 Суммы — `*_cents`, даты — `гггг-мм-дд`.
 
@@ -108,7 +111,7 @@ LAN-режим), `Origin == Host` и — для всех не-GET `/api/*` — �
 | `POST /api/obligations` · `PUT/DELETE /api/obligations/{id}` | Начисление. Если `due_date` пуст, но есть `delivery_date` — срок = поставка + `deferral_days` (или отсрочка поставщика) |
 | `POST /api/payments` · `PUT/DELETE /api/payments/{id}` | Выплата |
 | `GET /api/dashboard?date=` | Сводка (`calc.Dashboard`) |
-| `GET /api/matrix?year=&month=` | Таблица «как в Excel» за месяц (`calc.Matrix`) |
+| `GET /api/matrix?from=&to=` | «Таблица» за диапазон дат (`calc.Matrix`): дни с календарём РБ (`is_day_off`, `holiday_name`…), максимум 371 день. Старый режим `?year=&month=` тоже работает (диапазон = месяц) |
 | `POST /api/import?mode=replace\|merge&year=` (multipart `file`) | Импорт XLSX → `excelio.Report`. `replace` сохраняет текущие настройки; `merge` сопоставляет поставщиков по нормализованному имени |
 | `GET /api/export.xlsx?year=` | Скачать книгу формата оригинала (+ лист «Операции») |
 | `GET /api/export.csv` | Операции CSV (`;`, BOM, суммы с запятой) для Excel RU |

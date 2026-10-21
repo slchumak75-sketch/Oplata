@@ -1,12 +1,10 @@
-// Пакет server — HTTP API и раздача HTML GUI.
-//
-// Один и тот же Handler используется:
-//   - браузерным вариантом (cmd/oplata): http.Server на 127.0.0.1;
-//   - Wails-вариантом (desktop/): как AssetServer.Handler (запросы /api/*).
+// Пакет server — HTTP API и раздача HTML GUI единственного варианта приложения
+// (cmd/oplata, http.Server на 127.0.0.1). Wails/консольный варианты отброшены
+// владельцем 2026-10-21 — остался только oplata.exe.
 //
 // Безопасность локального приложения:
 //   - по умолчанию слушаем только 127.0.0.1 (флаг -addr в cmd);
-//   - проверяем Host (localhost/127.0.0.1/wails.localhost), если не включён LAN-режим;
+//   - проверяем Host (localhost/127.0.0.1), если не включён LAN-режим;
 //   - все изменяющие запросы требуют заголовок X-Oplata-Token со случайным токеном запуска.
 //     Токен отдаётся в GET /api/bootstrap: чужие сайты прочитать его не могут (Same-Origin),
 //     а без токена POST/PUT/DELETE отклоняются. Дополнительно сверяем Origin == Host.
@@ -58,7 +56,7 @@ func New(st *store.Store, version string, logger *log.Logger) *Server {
 	return &Server{Store: st, Version: version, Log: logger, token: token}
 }
 
-// Token возвращает токен запуска (нужен desktop-варианту разве что для отладки).
+// Token возвращает токен запуска (используется в тестах и для отладки).
 func (s *Server) Token() string { return s.token }
 
 // Handler собирает маршруты API + статику GUI.
@@ -97,7 +95,6 @@ func (s *Server) Handler() http.Handler {
 
 var allowedHosts = map[string]bool{
 	"127.0.0.1": true, "localhost": true, "::1": true, "[::1]": true,
-	"wails.localhost": true, "wails": true,
 }
 
 // guard: проверка Host, Origin и токена для изменяющих запросов.

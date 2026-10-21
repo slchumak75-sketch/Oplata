@@ -78,22 +78,33 @@ table.data td.overdue{color:var(--red);font-weight:700}
 .clickable{cursor:pointer}
 .clickable:hover{text-decoration:underline}
 
-/* Матрица как в Excel */
+/* Матрица: недели пн–вс, сверху месяц, выходные/праздники РБ — бежевые */
 .matrix-wrap{overflow:auto;max-height:calc(100vh - 235px);border:1px solid var(--line);border-radius:var(--radius);background:#fff}
 table.matrix{border-collapse:separate;border-spacing:0;font-size:12px}
 table.matrix th,table.matrix td{border-right:1px solid #e5e9f0;border-bottom:1px solid #e5e9f0;padding:3px 5px;min-width:64px}
 table.matrix thead th{background:#eef2f7;text-align:center;position:sticky;z-index:4}
-table.matrix thead tr.days th{top:0;background:#fde8e8}
-table.matrix thead tr.kinds th{top:25px;font-size:10.5px;color:#475569}
+table.matrix thead tr.months th{top:0;background:#dbe4f0;font-size:13px;letter-spacing:.02em}
+table.matrix thead tr.days th{top:26px;background:#fde8e8;white-space:nowrap}
+table.matrix thead tr.kinds th{top:52px;font-size:10.5px;color:#475569}
 table.matrix th.sticky-1,table.matrix td.sticky-1{position:sticky;left:0;z-index:3;background:#fff;min-width:170px;max-width:220px}
 table.matrix th.sticky-2,table.matrix td.sticky-2{position:sticky;left:170px;z-index:3;background:#f8fafc;min-width:92px}
 table.matrix thead th.sticky-1,table.matrix thead th.sticky-2{z-index:6;background:#dbe4f0}
+/* Нерабочие дни (выходные и праздничные по законодательству РБ) — бежевый столбец */
+table.matrix th.dayoff,table.matrix td.dayoff{background:#f5f0e1}
+table.matrix thead tr.days th.dayoff{background:#efe6cf}
+table.matrix thead tr.kinds th.dayoff{background:#f5f0e1}
+/* Начало недели (понедельник) — жирная левая граница */
+table.matrix th.week-start,table.matrix td.week-start{border-left:2px solid #94a3b8}
 table.matrix td.cell{cursor:pointer}
 table.matrix td.cell:hover{background:var(--blue-bg)}
 table.matrix td.today{background:#fff7db}
+table.matrix th.today{background:#fde047}
+table.matrix td.dayoff.today{background:#fdf3c4}
 table.matrix td.vyplaty{color:var(--green)}
 table.matrix tr.total td{background:#eef2f7;font-weight:700}
+table.matrix tr.total td.dayoff{background:#efe6cf}
 table.matrix td.neg{color:var(--red)}
+.legend-dayoff{display:inline-block;width:12px;height:12px;background:#f5f0e1;border:1px solid #cbbfa0;vertical-align:-2px}
 
 /* Бейджи статусов */
 .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11.5px;font-weight:700;white-space:nowrap}

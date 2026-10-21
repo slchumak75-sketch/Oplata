@@ -98,6 +98,26 @@ func TestTokenGuardAndCRUD(t *testing.T) {
 	if totals[14].(map[string]any)["sobstv_cents"].(float64) != 10000 {
 		t.Fatalf("matrix totals[14]: %v", totals[14])
 	}
+	// Матрица по диапазону (неделя пн–вс) с календарём РБ: 06.01.2025 — понедельник.
+	code, week := env.req(t, "GET", "/api/matrix?from=2025-01-06&to=2025-01-12", "", false)
+	if code != 200 {
+		t.Fatalf("matrix range: код %d", code)
+	}
+	days, _ := week["days"].([]any)
+	if len(days) != 7 {
+		t.Fatalf("matrix range: дней %d", len(days))
+	}
+	d0 := days[0].(map[string]any)
+	if d0["weekday"].(float64) != 1 || d0["is_day_off"] != true {
+		t.Fatalf("matrix range day0: %v", d0)
+	}
+	d1 := days[1].(map[string]any)
+	if d1["is_holiday"] != true || d1["holiday_name"] == "" {
+		t.Fatalf("matrix range Рождество: %v", d1)
+	}
+	if code, _ := env.req(t, "GET", "/api/matrix?from=2025-01-12&to=2025-01-06", "", false); code != 400 {
+		t.Fatalf("matrix reversed range: код %d", code)
+	}
 	// Удаление начисления.
 	if code, _ := env.req(t, "DELETE", "/api/obligations/"+oblID, "", true); code != http.StatusNoContent {
 		t.Fatalf("delete: код %d", code)

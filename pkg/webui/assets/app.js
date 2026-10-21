@@ -12,7 +12,7 @@ const STATUS_RU = {paid: 'Оплачено', partial: 'Частично', overdu
 
 const state = {
   token: '', today: '', settings: {}, suppliers: null, buyers: null,
-  dashboardDate: '', matrixYear: 0, matrixMonth: 0,
+  dashboardDate: '', matrixAnchor: '', // понедельник отображаемой недели «Таблицы» (ISOString)
   opsFilters: {supplier_id: '', kind: 'all', from: '', to: '', q: ''},
   includeArchived: false,
 };
@@ -144,9 +144,7 @@ async function boot() {
     state.today = bootData.today;
     state.settings = bootData.settings || {};
     state.dashboardDate = state.today;
-    const now = state.today.split('-');
-    state.matrixYear = parseInt(now[0], 10);
-    state.matrixMonth = parseInt(now[1], 10);
+    state.matrixAnchor = mondayOfISO(state.today); // «Таблица» открывается на текущей неделе
     $('#companyName').textContent = state.settings.company_name || '';
     document.title = 'Оплаты — ' + (state.settings.company_name || '');
     $('#footerInfo').textContent = 'Версия ' + bootData.version + ' · Файл данных: ' + bootData.data_file +
@@ -256,63 +254,151 @@ function bindRowButtons(root) {
   root.querySelectorAll('[data-pay-open]').forEach((b) => { b.onclick = () => paymentForm({supplierId: b.dataset.payOpen, amountCents: parseInt(b.dataset.amount, 10)}); });
 }
 
-/* ---------- Таблица как в Excel ---------- */
-async function renderMatrix(view) {
-  const year = state.matrixYear, month = state.matrixMonth;
+/* ---------- Таблица: недели (понедельник–воскресенье), месяц над датами ---------- */
+/*
+ * Вкладка показывает диапазон целых недель вокруг «якоря» (state.matrixAnchor —
+ * понедельник отображаемой недели). Один запрос /api/matrix?from&to грузит
+ * MATRIX_WEEKS недель (с запасом назад), горизонтальная прокрутка внутри диапазона
+ * «прилипает» к границам недель (скачки кратно неделе). Кнопки «‹‹ Раньше»/«Позже ››»
+ * сдвигают якорь на 8 недель и перечитывают данные. Столбцы нерабочих дней РБ
+ * (выходные + госпраздники с учётом переносов) сервер помечает is_day_off — бежевый фон.
+ */
+const WEEKDAYS_SHORT = ['', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс'];
+const MATRIX_WEEKS = 12;      // сколько недель в одном запросе
+const MATRIX_BACK_WEEKS = 2;  // запас недель слева от якоря
+const MATRIX_SHIFT_DAYS = 56; // шаг кнопок «‹‹ Раньше»/«Позже ››» (8 недель)
+
+function isoToUTC(iso) { const p = iso.split('-'); return Date.UTC(+p[0], +p[1] - 1, +p[2]); }
+function utcToISO(ms) { return new Date(ms).toISOString().slice(0, 10); }
+function addDaysISO(iso, n) { return utcToISO(isoToUTC(iso) + n * 86400000); }
+function mondayOfISO(iso) {
+  const wd = (new Date(isoToUTC(iso)).getUTCDay() + 6) % 7; // 0 = понедельник
+  return addDaysISO(iso, -wd);
+}
+function capitalizeMonth(name) { return name ? name.charAt(0).toUpperCase() + name.slice(1) : ''; }
+
+async function renderMatrix(view, targetMonday) {
+  const anchor = mondayOfISO(targetMonday || state.matrixAnchor || state.today);
+  state.matrixAnchor = anchor;
+  const from = addDaysISO(anchor, -MATRIX_BACK_WEEKS * 7);
+  const to = addDaysISO(from, MATRIX_WEEKS * 7 - 1);
   view.innerHTML = '<div class="loading">Загрузка таблицы…</div>';
-  const m = await api('/api/matrix?year=' + year + '&month=' + month);
-  const monthOptions = MONTHS_RU.slice(1).map((name, i) =>
-    '<option value="' + (i + 1) + '"' + (i + 1 === month ? ' selected' : '') + '>' + name + '</option>').join('');
+  const m = await api('/api/matrix?from=' + from + '&to=' + to);
+
+  // Верхняя строка шапки: месяц над датами (сегменты по месяцам, colspan = дни × 2).
+  let monthHeaders = '';
+  for (let i = 0; i < m.days.length;) {
+    const d0 = m.days[i];
+    let n = 0;
+    while (i + n < m.days.length && m.days[i + n].month === d0.month && m.days[i + n].year === d0.year) n++;
+    monthHeaders += '<th colspan="' + (n * 2) + '" class="month-seg">' +
+      capitalizeMonth(MONTHS_RU[d0.month]) + ' ' + d0.year + '</th>';
+    i += n;
+  }
+  const dayCls = (d, first) =>
+    (d.is_day_off ? ' dayoff' : '') + (first && d.weekday === 1 ? ' week-start' : '') +
+    (d.date === state.today ? ' today' : '');
   const dayHeaders = m.days.map((d) => {
-    const today = d.date === state.today;
-    return '<th colspan="2"' + (today ? ' style="background:#fde047"' : '') + '>' + d.day + '</th>';
+    const tip = d.holiday_name ? ' title="' + esc(d.holiday_name) + '"' : '';
+    return '<th colspan="2" class="day-head' + dayCls(d, true) + '"' + tip + '>' +
+      d.day + ' ' + WEEKDAYS_SHORT[d.weekday] + '</th>';
   }).join('');
-  const kindHeaders = m.days.map(() => '<th>Собств</th><th>Выплаты</th>').join('');
-  const totalCells = m.day_totals.map((t) =>
-    '<td class="num">' + fmtMoneyShort(t.sobstv_cents) + '</td><td class="num vyplaty">' + (t.vyplaty_cents ? '−' + fmtMoneyShort(t.vyplaty_cents) : '') + '</td>').join('');
+  const kindHeaders = m.days.map((d) =>
+    '<th class="' + dayCls(d, true) + '">Собств</th><th class="' + dayCls(d, false) + '">Выплаты</th>').join('');
+  const totalCells = m.days.map((d, i) => {
+    const t = m.day_totals[i];
+    return '<td class="num' + dayCls(d, true) + '">' + fmtMoneyShort(t.sobstv_cents) + '</td>' +
+      '<td class="num vyplaty' + dayCls(d, false) + '">' + (t.vyplaty_cents ? '−' + fmtMoneyShort(t.vyplaty_cents) : '') + '</td>';
+  }).join('');
   const bodyRows = m.rows.filter((r) => state.includeArchived || !r.supplier.archived).map((r) => {
     const byDate = {};
     for (const c of r.cells) byDate[c.date] = c;
     const cells = m.days.map((d) => {
       const c = byDate[d.date] || {sobstv_cents: 0, vyplaty_cents: 0};
-      const tdCls = 'cell num' + (d.date === state.today ? ' today' : '');
       const attr = ' data-cell-sup="' + esc(r.supplier.id) + '" data-cell-date="' + d.date + '"';
-      return '<td class="' + tdCls + '"' + attr + '>' + fmtMoneyShort(c.sobstv_cents) + '</td>' +
-        '<td class="' + tdCls + ' vyplaty"' + attr + '>' + (c.vyplaty_cents ? '−' + fmtMoneyShort(c.vyplaty_cents) : '') + '</td>';
+      return '<td class="cell num' + dayCls(d, true) + '"' + attr + '>' + fmtMoneyShort(c.sobstv_cents) + '</td>' +
+        '<td class="cell num vyplaty' + dayCls(d, false) + '"' + attr + '>' + (c.vyplaty_cents ? '−' + fmtMoneyShort(c.vyplaty_cents) : '') + '</td>';
     }).join('');
     return '<tr><td class="sticky-1"><a href="#/supplier/' + encodeURIComponent(r.supplier.id) + '">' + esc(r.supplier.name) + '</a></td>' +
-      '<td class="sticky-2 num' + (r.year_balance_cents < 0 ? ' neg' : '') + '" title="Задолженность за всё время: ' + esc(fmtMoney(r.balance_cents)) + '">' + fmtMoneyShort(r.year_balance_cents) + '</td>' + cells + '</tr>';
+      '<td class="sticky-2 num' + (r.range_balance_cents < 0 ? ' neg' : '') + '" title="Задолженность за всё время: ' + esc(fmtMoney(r.balance_cents)) + '">' + fmtMoneyShort(r.range_balance_cents) + '</td>' + cells + '</tr>';
   }).join('');
 
   view.innerHTML =
-    '<div class="toolbar"><button class="btn" id="prevMonth">←</button>' +
-    '<select id="selMonth">' + monthOptions + '</select>' +
-    '<input type="number" id="inpYear" value="' + year + '" style="width:90px">' +
-    '<button class="btn" id="nextMonth">→</button>' +
-    '<button class="btn" id="gotoToday">Текущий месяц</button>' +
-    '<strong style="margin-left:8px">' + MONTHS_RU[month] + ' ' + year + ' г.</strong>' +
-    '<span class="spacer"></span><span class="muted">Итого задолженность за ' + year + ' год: <strong>' + fmtMoney(m.grand_year_cents) +
+    '<div class="toolbar">' +
+    '<button class="btn" id="shiftBack" title="На 8 недель раньше (перечитать данные)">‹‹ Раньше</button>' +
+    '<button class="btn" id="weekBack" title="На неделю назад">‹ Неделя</button>' +
+    '<button class="btn" id="weekFwd" title="На неделю вперёд">Неделя ›</button>' +
+    '<button class="btn" id="shiftFwd" title="На 8 недель позже (перечитать данные)">Позже ››</button>' +
+    '<button class="btn" id="gotoToday">Сегодня</button>' +
+    '<label class="muted">Дата <input type="date" id="gotoDate" value="' + esc(anchor) + '"></label>' +
+    '<button class="btn" id="gotoBtn">Перейти</button>' +
+    '<strong style="margin-left:8px">с ' + fmtDate(from) + ' по ' + fmtDate(to) + '</strong>' +
+    '<span class="spacer"></span><span class="muted">Задолженность за диапазон: <strong>' + fmtMoney(m.grand_range_cents) +
     ' ' + esc(state.settings.currency_label || '') + '</strong> · клик по ячейке — операции дня</span></div>' +
-    '<div class="matrix-wrap"><table class="matrix"><thead>' +
-    '<tr class="days"><th class="sticky-1">ПОСТАВЩИК</th><th class="sticky-2">ЗАДОЛЖ.</th>' + dayHeaders + '</tr>' +
-    '<tr class="kinds"><th class="sticky-1"></th><th class="sticky-2">за ' + year + '</th>' + kindHeaders + '</tr>' +
+    '<div class="matrix-wrap" id="matrixWrap"><table class="matrix"><thead>' +
+    '<tr class="months"><th class="sticky-1">ПОСТАВЩИК</th><th class="sticky-2">ЗАДОЛЖ.</th>' + monthHeaders + '</tr>' +
+    '<tr class="days"><th class="sticky-1"></th><th class="sticky-2"></th>' + dayHeaders + '</tr>' +
+    '<tr class="kinds"><th class="sticky-1"></th><th class="sticky-2">за период</th>' + kindHeaders + '</tr>' +
     '</thead><tbody>' +
-    '<tr class="total"><td class="sticky-1">ВСЕГО</td><td class="sticky-2 num">' + fmtMoneyShort(m.grand_year_cents) + '</td>' + totalCells + '</tr>' +
+    '<tr class="total"><td class="sticky-1">ВСЕГО</td><td class="sticky-2 num">' + fmtMoneyShort(m.grand_range_cents) + '</td>' + totalCells + '</tr>' +
     bodyRows + '</tbody></table></div>' +
-    '<p class="muted">Как в Excel: дата вверху — срок оплаты с учётом отсрочки; «Собств» — к оплате, «Выплаты» показаны с минусом. Если за день было несколько операций — в ячейке их сумма.</p>';
+    '<p class="muted">Неделя — с понедельника по воскресенье; горизонтальная прокрутка идёт скачками по неделям. ' +
+    '<span class="legend-dayoff"></span> — выходные и праздничные дни по законодательству РБ (с учётом переносов рабочих дней), ' +
+    'наведите курсор на дату — покажется название праздника. Жёлтым отмечен сегодняшний день. ' +
+    'Как в Excel: дата вверху — срок оплаты с учётом отсрочки; «Собств» — к оплате, «Выплаты» показаны с минусом. ' +
+    'Если за день было несколько операций — в ячейке их сумма.</p>';
 
-  const go = (y, mo) => { state.matrixYear = y; state.matrixMonth = mo; renderMatrix(view); };
-  $('#selMonth').onchange = (e) => go(year, parseInt(e.target.value, 10));
-  $('#inpYear').onchange = (e) => go(parseInt(e.target.value, 10) || year, month);
-  $('#prevMonth').onclick = () => { const d = new Date(Date.UTC(year, month - 2, 1)); go(d.getUTCFullYear(), d.getUTCMonth() + 1); };
-  $('#nextMonth').onclick = () => { const d = new Date(Date.UTC(year, month, 1)); go(d.getUTCFullYear(), d.getUTCMonth() + 1); };
-  $('#gotoToday').onclick = () => { const p = state.today.split('-'); go(parseInt(p[0], 10), parseInt(p[1], 10)); };
   view.querySelectorAll('[data-cell-sup]').forEach((td) => {
     td.onclick = () => dayOperationsModal(td.dataset.cellSup, td.dataset.cellDate);
   });
-  // Прокрутить к сегодняшнему дню, если открыт текущий месяц.
-  const todayTh = view.querySelector('table.matrix td.today');
-  if (todayTh) todayTh.scrollIntoView({block: 'nearest', inline: 'center'});
+
+  /* Горизонтальная прокрутка скачками кратно неделе: после остановки скролла
+     подтягиваем вид к ближайшему понедельнику. */
+  const wrap = $('#matrixWrap');
+  const mondayHeads = Array.from(view.querySelectorAll('thead tr.days th.week-start'));
+  const sticky2 = view.querySelector('thead th.sticky-2');
+  const sticky1 = view.querySelector('thead th.sticky-1');
+  const stickyW = (sticky1 && sticky2)
+    ? (sticky2.getBoundingClientRect().right - sticky1.getBoundingClientRect().left)
+    : 262;
+  const contentX = (el) => el.getBoundingClientRect().left - wrap.getBoundingClientRect().left + wrap.scrollLeft;
+  const weekIndexNow = () => {
+    const target = wrap.scrollLeft + stickyW;
+    let best = 0, bestDist = Infinity;
+    mondayHeads.forEach((th, i) => {
+      const dist = Math.abs(contentX(th) - target);
+      if (dist < bestDist) { bestDist = dist; best = i; }
+    });
+    return best;
+  };
+  let snapping = false;
+  const scrollToWeek = (idx, behavior) => {
+    if (idx < 0) { renderMatrix(view, addDaysISO(state.matrixAnchor, -MATRIX_SHIFT_DAYS)); return; }
+    if (idx >= mondayHeads.length) { renderMatrix(view, addDaysISO(state.matrixAnchor, MATRIX_SHIFT_DAYS)); return; }
+    snapping = true;
+    wrap.scrollTo({left: Math.max(0, contentX(mondayHeads[idx]) - stickyW), behavior: behavior || 'smooth'});
+    setTimeout(() => { snapping = false; }, 400);
+  };
+  let snapTimer = null;
+  wrap.addEventListener('scroll', () => {
+    if (snapping) return;
+    clearTimeout(snapTimer);
+    snapTimer = setTimeout(() => scrollToWeek(weekIndexNow()), 120);
+  });
+
+  $('#weekBack').onclick = () => scrollToWeek(weekIndexNow() - 1);
+  $('#weekFwd').onclick = () => scrollToWeek(weekIndexNow() + 1);
+  $('#shiftBack').onclick = () => renderMatrix(view, addDaysISO(state.matrixAnchor, -MATRIX_SHIFT_DAYS));
+  $('#shiftFwd').onclick = () => renderMatrix(view, addDaysISO(state.matrixAnchor, MATRIX_SHIFT_DAYS));
+  $('#gotoToday').onclick = () => renderMatrix(view, mondayOfISO(state.today));
+  $('#gotoBtn').onclick = () => { const v = $('#gotoDate').value; if (v) renderMatrix(view, mondayOfISO(v)); };
+
+  // Начальная позиция: неделя якоря (без анимации, чтобы не сработал snap).
+  snapping = true;
+  if (mondayHeads[MATRIX_BACK_WEEKS]) {
+    wrap.scrollLeft = Math.max(0, contentX(mondayHeads[MATRIX_BACK_WEEKS]) - stickyW);
+  }
+  setTimeout(() => { snapping = false; }, 50);
 }
 
 async function dayOperationsModal(supplierId, date) {
