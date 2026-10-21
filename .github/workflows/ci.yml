@@ -41,6 +41,11 @@ jobs:
         run: go vet ./...
       - name: go test
         run: go test ./...
+      - name: Экспорт XLSX открывается сторонним openpyxl и сверяется с оригиналом
+        run: |
+          python3 -m pip install --quiet openpyxl || python3 -m pip install --quiet --break-system-packages openpyxl
+          go run ./tools/exportdemo /tmp/oplata-2025.xlsx
+          python3 tools/verify_export.py /tmp/oplata-2025.xlsx
       - name: Кросс-компиляция Windows (проверка, что собирается)
         run: |
           VERSION="$(git describe --tags --always 2>/dev/null || echo dev)"
