@@ -116,7 +116,7 @@ func (s *Server) handleSupplierDelete(w http.ResponseWriter, r *http.Request) {
 		}
 		for _, p := range db.Payments {
 			if p.SupplierID == id {
-				return fmt.Errorf("у поставщика есть выплаты — удалите операции или отправьте поставщика в архив")
+				return fmt.Errorf("у поставщика есть оплаты — удалите операции или отправьте поставщика в архив")
 			}
 		}
 		db.Suppliers = slices.DeleteFunc(db.Suppliers, func(sup model.Supplier) bool { return sup.ID == id })
@@ -480,7 +480,7 @@ func resolvePayment(db *model.DB, req paymentRequest) (model.Payment, error) {
 		return model.Payment{}, fmt.Errorf("поставщик не найден")
 	}
 	if req.AmountCents == 0 {
-		return model.Payment{}, fmt.Errorf("укажите сумму выплаты")
+		return model.Payment{}, fmt.Errorf("укажите сумму оплаты")
 	}
 	date, err := model.ParseDate(req.Date)
 	if err != nil {
@@ -535,7 +535,7 @@ func (s *Server) handlePaymentUpdate(w http.ResponseWriter, r *http.Request) {
 				return nil
 			}
 		}
-		return errNotFound("выплата не найдена")
+		return errNotFound("оплата не найдена")
 	})
 	if err != nil {
 		writeErr(w, statusForErr(err), err.Error())
@@ -550,7 +550,7 @@ func (s *Server) handlePaymentDelete(w http.ResponseWriter, r *http.Request) {
 		before := len(db.Payments)
 		db.Payments = slices.DeleteFunc(db.Payments, func(p model.Payment) bool { return p.ID == id })
 		if len(db.Payments) == before {
-			return errNotFound("выплата не найдена")
+			return errNotFound("оплата не найдена")
 		}
 		return nil
 	})
@@ -777,10 +777,10 @@ func (s *Server) handleExportCSV(w http.ResponseWriter, r *http.Request) {
 		if o.AmountExclVATCents != 0 || o.VATCents != 0 {
 			exclVAT, vat = money(o.AmountExclVATCents), money(o.VATCents)
 		}
-		rows = append(rows, csvRow{o.DueDate, []string{"Собств (к оплате)", names[o.SupplierID], dmy(o.DueDate), money(o.AmountCents), dmy(o.DeliveryDate), o.DocNumber, o.Comment, exclVAT, vat}})
+		rows = append(rows, csvRow{o.DueDate, []string{"Приход (к оплате)", names[o.SupplierID], dmy(o.DueDate), money(o.AmountCents), dmy(o.DeliveryDate), o.DocNumber, o.Comment, exclVAT, vat}})
 	}
 	for _, p := range db.Payments {
-		rows = append(rows, csvRow{p.Date, []string{"Выплата", names[p.SupplierID], dmy(p.Date), money(p.AmountCents), "", p.DocNumber, p.Comment, "", ""}})
+		rows = append(rows, csvRow{p.Date, []string{"Оплата", names[p.SupplierID], dmy(p.Date), money(p.AmountCents), "", p.DocNumber, p.Comment, "", ""}})
 	}
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].iso < rows[j].iso })
 	for _, row := range rows {

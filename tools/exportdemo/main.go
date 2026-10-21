@@ -1,9 +1,11 @@
-// Команда exportdemo пишет XLSX-экспорт встроенных стартовых данных (seed) за 2025 год.
+// Команда exportdemo проверяет связку импорт→экспорт: читает исходный
+// «Оплаты Строймаркет.xlsx» через pkg/excelio и пишет экспорт за тот же год.
 //
-// Нужна для независимой проверки совместимости экспорта: в CI результат открывает
-// сторонний openpyxl (tools/verify_export.py). Вручную:
+// Нужна для независимой проверки совместимости в CI: результат открывает
+// сторонний openpyxl (tools/verify_export.py). Вручную из корня репозитория:
 //
 //	go run ./tools/exportdemo /tmp/oplata-2025.xlsx
+//	go run ./tools/exportdemo /tmp/oplata.xlsx /path/to/input.xlsx
 package main
 
 import (
@@ -11,20 +13,29 @@ import (
 	"os"
 
 	"github.com/slchumak75-sketch/oplata/pkg/excelio"
-	"github.com/slchumak75-sketch/oplata/pkg/store"
 )
 
 func main() {
 	out := "oplata-2025.xlsx"
+	in := "Оплаты Строймаркет.xlsx"
 	if len(os.Args) > 1 {
 		out = os.Args[1]
 	}
-	db, err := store.Decode(store.SeedJSON)
+	if len(os.Args) > 2 {
+		in = os.Args[2]
+	}
+
+	src, err := os.ReadFile(in)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "seed:", err)
+		fmt.Fprintln(os.Stderr, "read:", err)
 		os.Exit(1)
 	}
-	data, err := excelio.ExportXLSX(db, 2025)
+	db, report, err := excelio.ParseXLSX(src, 0)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "import:", err)
+		os.Exit(1)
+	}
+	data, err := excelio.ExportXLSX(db, report.Year)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "export:", err)
 		os.Exit(1)
@@ -33,5 +44,5 @@ func main() {
 		fmt.Fprintln(os.Stderr, "write:", err)
 		os.Exit(1)
 	}
-	fmt.Printf("записан %s (%d байт)\n", out, len(data))
+	fmt.Printf("записан %s (%d байт) из %s\n", out, len(data), in)
 }

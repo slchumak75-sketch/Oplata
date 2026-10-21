@@ -150,7 +150,7 @@ async function boot() {
     $('#companyName').textContent = state.settings.company_name || '';
     document.title = 'Оплаты — ' + (state.settings.company_name || '');
     $('#footerInfo').textContent = 'Версия ' + bootData.version + ' · Файл данных: ' + bootData.data_file +
-      ' · Поставщиков: ' + bootData.counts.suppliers + ', начислений: ' + bootData.counts.obligations + ', выплат: ' + bootData.counts.payments +
+      ' · Поставщиков: ' + bootData.counts.suppliers + ', приходов: ' + bootData.counts.obligations + ', оплат: ' + bootData.counts.payments +
       ', покупателей: ' + (bootData.counts.buyers || 0);
     renderWarnings(bootData.warnings);
     await loadSuppliersCached();
@@ -212,9 +212,7 @@ async function renderDashboard(view) {
       const overdue = s.overdue_cents > 0 ? '<td class="num overdue">' + fmtMoney(s.overdue_cents) + '</td>' : '<td class="num">—</td>';
       return '<tr><td><a href="#/supplier/' + encodeURIComponent(s.supplier.id) + '">' + esc(s.supplier.name) + '</a></td>' +
         '<td class="num">' + fmtMoney(s.balance_cents) + '</td>' + overdue +
-        '<td>' + (s.next_due_date ? fmtDate(s.next_due_date) : '—') + '</td><td class="num">' + (s.next_due_cents ? fmtMoney(s.next_due_cents) : '—') + '</td>' +
-        '<td class="nowrap"><button class="btn btn-small" data-add-obl="' + esc(s.supplier.id) + '">＋ Собств</button> ' +
-        '<button class="btn btn-small" data-add-pay="' + esc(s.supplier.id) + '">＋ Выплата</button></td></tr>';
+        '<td>' + (s.next_due_date ? fmtDate(s.next_due_date) : '—') + '</td><td class="num">' + (s.next_due_cents ? fmtMoney(s.next_due_cents) : '—') + '</td></tr>';
     }).join('');
   const overdueRows = d.overdue_list.map((i) =>
     '<tr><td><a href="#/supplier/' + encodeURIComponent(i.supplier_id) + '">' + esc(i.supplier_name) + '</a></td><td>' + fmtDate(i.due_date) +
@@ -234,12 +232,12 @@ async function renderDashboard(view) {
     card('Просрочено', d.overdue_cents, d.overdue_cents > 0 ? 'red' : '') +
     card('Срок сегодня', d.due_today_cents, d.due_today_cents > 0 ? 'amber' : '') +
     card('Срок в ближайшие 7 дней', d.due_week_cents, d.due_week_cents > 0 ? 'amber' : '') +
-    card('Начислено (Собств) за месяц', d.accrued_month_cents) +
-    card('Выплачено за месяц', d.paid_month_cents, 'green') +
+    card('Приход за месяц', d.accrued_month_cents) +
+    card('Оплачено за месяц', d.paid_month_cents, 'green') +
     (d.total_overpaid_cents > 0 ? card('Переплаты поставщикам', d.total_overpaid_cents) : '') +
     '</div>' +
     '<div class="panel"><h3>Задолженность по поставщикам</h3><div class="table-wrap"><table class="data"><thead><tr>' +
-    '<th>Поставщик</th><th class="num">Задолженность</th><th class="num">Просрочено</th><th>Ближайший срок</th><th class="num">Сумма срока</th><th></th>' +
+    '<th>Поставщик</th><th class="num">Задолженность</th><th class="num">Просрочено</th><th>Ближайший срок</th><th class="num">Сумма срока</th>' +
     '</tr></thead><tbody>' + supplierRows + '</tbody></table></div></div>' +
     '<div class="panel"><h3>🔴 Просроченные оплаты (' + d.overdue_list.length + ')</h3>' +
     (d.overdue_list.length ? '<div class="table-wrap"><table class="data"><thead><tr><th>Поставщик</th><th>Срок</th><th class="num">Сумма</th><th class="num">Осталось</th><th>Просрочка</th><th>Документ</th><th></th></tr></thead><tbody>' + overdueRows + '</tbody></table></div>' : '<p class="muted">Просроченных оплат нет 🎉</p>') + '</div>' +
@@ -262,7 +260,8 @@ function bindRowButtons(root) {
  * state.matrixAnchor (понедельник). Кнопки влево/вправо сразу перескакивают на
  * предыдущую/следующую неделю и перечитывают /api/matrix только за эти 7 дней.
  * Верхняя полоса над датами — месяц и год. Справа — панель поставки выбранного
- * поставщика. Столбцы нерабочих дней РБ сервер помечает is_day_off (бежевый фон).
+ * поставщика. Столбцы нерабочих дней РБ сервер помечает is_day_off; GUI использует
+ * отметку только в шапке дат, а поля с суммами не закрашивает.
  */
 const WEEKDAYS_SHORT = ['', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс'];
 let deliveryPreviewSeq = 0; // защита от гонок при предпросмотре срока оплаты
@@ -313,11 +312,11 @@ function deliveryPanelHtml(supplier) {
     '<label class="field">НДС <input type="text" class="money" id="dVat" inputmode="decimal" placeholder="0,00" value="' + esc(d.vat) + '">' +
     '<span class="hint">Сумма НДС в ' + cur + ', не ставка. Пусто = 0.</span></label>' +
     '<label class="field">Сумма с НДС <input type="text" class="money delivery-total" id="dAmountWithVat" readonly tabindex="-1" placeholder="0,00">' +
-    '<span class="hint">Вычисляется: сумма без НДС + НДС. Эта сумма попадёт в «Собств».</span></label>' +
+    '<span class="hint">Вычисляется: сумма без НДС + НДС. Эта сумма попадёт в «Приход».</span></label>' +
     '<div class="delivery-due"><span>Срок оплаты</span><strong id="dDueDate">—</strong><small id="dDueNote"></small></div>' +
     '</div>' +
     '<div class="delivery-actions"><button class="btn" id="dClear" type="button">Очистить</button>' +
-    '<button class="btn btn-primary" id="dSave" type="button">Добавить в «Собств»</button></div>' +
+    '<button class="btn btn-primary" id="dSave" type="button">Добавить в «Приход»</button></div>' +
     '<p class="muted delivery-note">Срок оплаты = дата поставки + отсрочка. Если дата выпадает на выходной ' +
     'или праздник РБ, программа сдвигает её на ближайший следующий рабочий день. После сохранения таблица ' +
     'сама перейдёт на неделю срока оплаты.</p>';
@@ -413,7 +412,7 @@ function bindDeliveryPanel(view, supplier) {
       await loadSuppliersCached();
       state.matrixDeliveryDraft.amount_excl_vat = '';
       state.matrixDeliveryDraft.vat = '';
-      toast('Поставка добавлена в «Собств» на ' + fmtDate(created.due_date), 'ok');
+      toast('Поставка добавлена в «Приход» на ' + fmtDate(created.due_date), 'ok');
       await renderMatrix(view, mondayOfISO(created.due_date));
     } catch (e) {
       showError(e.message);
@@ -446,17 +445,20 @@ async function renderMatrix(view, targetMonday) {
   const dayCls = (d, first) =>
     (d.is_day_off ? ' dayoff' : '') + (first && d.weekday === 1 ? ' week-start' : '') +
     (d.date === state.today ? ' today' : '');
+  // По требованию владельца поля с данными не закрашиваем: для ячеек сумм
+  // оставляем только границу начала недели, без dayoff/today фона.
+  const dataDayCls = (d, first) => (first && d.weekday === 1 ? ' week-start' : '');
   const dayHeaders = m.days.map((d) => {
     const tip = d.holiday_name ? ' title="' + esc(d.holiday_name) + '"' : '';
     return '<th colspan="2" class="day-head' + dayCls(d, true) + '"' + tip + '>' +
       d.day + ' ' + WEEKDAYS_SHORT[d.weekday] + '</th>';
   }).join('');
   const kindHeaders = m.days.map((d) =>
-    '<th class="' + dayCls(d, true) + '">Собств</th><th class="' + dayCls(d, false) + '">Выплаты</th>').join('');
+    '<th class="' + dayCls(d, true) + '">Приход</th><th class="' + dayCls(d, false) + '">Оплата</th>').join('');
   const totalCells = m.days.map((d, i) => {
     const t = m.day_totals[i];
-    return '<td class="num' + dayCls(d, true) + '">' + fmtMoneyShort(t.sobstv_cents) + '</td>' +
-      '<td class="num vyplaty' + dayCls(d, false) + '">' + (t.vyplaty_cents ? '−' + fmtMoneyShort(t.vyplaty_cents) : '') + '</td>';
+    return '<td class="num' + dataDayCls(d, true) + '">' + fmtMoneyShort(t.sobstv_cents) + '</td>' +
+      '<td class="num vyplaty' + dataDayCls(d, false) + '">' + (t.vyplaty_cents ? '−' + fmtMoneyShort(t.vyplaty_cents) : '') + '</td>';
   }).join('');
   const bodyRows = m.rows.filter((r) => state.includeArchived || !r.supplier.archived).map((r) => {
     const byDate = {};
@@ -464,8 +466,8 @@ async function renderMatrix(view, targetMonday) {
     const cells = m.days.map((d) => {
       const c = byDate[d.date] || {sobstv_cents: 0, vyplaty_cents: 0};
       const attr = ' data-cell-sup="' + esc(r.supplier.id) + '" data-cell-date="' + d.date + '"';
-      return '<td class="cell num' + dayCls(d, true) + '"' + attr + '>' + fmtMoneyShort(c.sobstv_cents) + '</td>' +
-        '<td class="cell num vyplaty' + dayCls(d, false) + '"' + attr + '>' + (c.vyplaty_cents ? '−' + fmtMoneyShort(c.vyplaty_cents) : '') + '</td>';
+      return '<td class="cell num' + dataDayCls(d, true) + '"' + attr + '>' + fmtMoneyShort(c.sobstv_cents) + '</td>' +
+        '<td class="cell num vyplaty' + dataDayCls(d, false) + '"' + attr + '>' + (c.vyplaty_cents ? '−' + fmtMoneyShort(c.vyplaty_cents) : '') + '</td>';
     }).join('');
     return '<tr' + (r.supplier.id === state.matrixSupplierId ? ' class="selected-supplier"' : '') + '>' +
       '<td class="sticky-1"><button type="button" class="supplier-link" data-delivery-sup="' + esc(r.supplier.id) + '" title="Ввести поставку поставщика">' + esc(r.supplier.name) + '</button></td>' +
@@ -494,9 +496,9 @@ async function renderMatrix(view, targetMonday) {
     '<tr class="total"><td class="sticky-1">ВСЕГО</td><td class="sticky-2 num">' + fmtMoneyShort(m.grand_range_cents) + '</td>' + totalCells + '</tr>' +
     bodyRows + '</tbody></table></div>' +
     '<p class="muted">Показана одна неделя — с понедельника по воскресенье. Кнопки «← Неделя» и «Неделя →» ' +
-    'перескакивают сразу на 7 дней. <span class="legend-dayoff"></span> — выходные и праздничные дни по законодательству РБ ' +
-    '(с учётом переносов рабочих дней), наведите курсор на дату — покажется название праздника. Жёлтым отмечен сегодняшний день. ' +
-    'Дата вверху — срок оплаты с учётом отсрочки; «Собств» — к оплате, «Выплаты» показаны с минусом. ' +
+    'перескакивают сразу на 7 дней. В шапке дат <span class="legend-dayoff"></span> — выходные и праздничные дни по законодательству РБ ' +
+    '(с учётом переносов рабочих дней), наведите курсор на дату — покажется название праздника. Жёлтым в шапке отмечен сегодняшний день; поля с суммами не закрашиваются. ' +
+    'Дата вверху — срок оплаты с учётом отсрочки; «Приход» — к оплате, «Оплата» показана с минусом. ' +
     'Если за день было несколько операций — в ячейке их сумма.</p></div>' +
     '<aside class="delivery-panel' + (selectedSupplier ? '' : ' hidden') + '" id="deliveryPanel">' + deliveryPanelHtml(selectedSupplier) + '</aside></div>';
 
@@ -539,8 +541,8 @@ async function dayOperationsModal(supplierId, date) {
       ? '<div class="table-wrap"><table class="data"><tbody>' + rows + '</tbody></table></div>'
       : '<p class="muted">Операций за этот день нет.</p>') +
     '<div class="modal-actions"><button class="btn" id="dayClose">Закрыть</button>' +
-    '<button class="btn btn-primary" id="dayAddObl">＋ Собств (срок ' + fmtDate(date) + ')</button>' +
-    '<button class="btn btn-success" id="dayAddPay">＋ Выплата</button></div>', true);
+    '<button class="btn btn-primary" id="dayAddObl">＋ Приход (срок ' + fmtDate(date) + ')</button>' +
+    '<button class="btn btn-success" id="dayAddPay">＋ Оплата</button></div>', true);
   $('#dayClose', modal).onclick = () => { closeModal(); };
   $('#dayAddObl', modal).onclick = () => obligationForm({supplierId, dueDate: date});
   $('#dayAddPay', modal).onclick = () => paymentForm({supplierId, date});
@@ -559,22 +561,17 @@ async function renderSuppliers(view) {
       '<td class="num">' + fmtMoney(s.balance_cents) + '</td>' +
       '<td class="num' + (s.overdue_cents > 0 ? ' overdue' : '') + '">' + (s.overdue_cents ? fmtMoney(s.overdue_cents) : '—') + '</td>' +
       '<td class="center">' + (s.supplier.deferral_days ? s.supplier.deferral_days + ' дн.' : '—') + '</td>' +
-      '<td>' + esc(s.supplier.note || '') + '</td>' +
-      '<td class="nowrap"><button class="btn btn-small" data-edit-sup="' + esc(s.supplier.id) + '">Изм.</button> ' +
-      '<button class="btn btn-small" data-add-obl="' + esc(s.supplier.id) + '">＋ Собств</button> ' +
-      '<button class="btn btn-small" data-add-pay="' + esc(s.supplier.id) + '">＋ Выплата</button></td></tr>').join('');
+      '<td>' + esc(s.supplier.note || '') + '</td></tr>').join('');
   view.innerHTML =
     '<div class="toolbar"><button class="btn btn-primary" id="btnNewSupplier">＋ Добавить поставщика</button>' +
     '<button class="btn" id="btnSupplierCardList">🏭 Карточка поставщика</button>' +
     '<label><input type="checkbox" id="chkArchived2"' + (state.includeArchived ? ' checked' : '') + '> показывать архивных</label></div>' +
     '<div class="panel"><h3>Поставщики (' + state.suppliers.length + ')</h3><div class="table-wrap"><table class="data">' +
-    '<thead><tr><th>Наименование поставщика</th><th>УНП</th><th class="num">Задолженность</th><th class="num">Просрочено</th><th>Отсрочка</th><th>Примечание</th><th></th></tr></thead>' +
+    '<thead><tr><th>Наименование поставщика</th><th>УНП</th><th class="num">Задолженность</th><th class="num">Просрочено</th><th>Отсрочка</th><th>Примечание</th></tr></thead>' +
     '<tbody>' + rows + '</tbody></table></div></div>';
   $('#btnNewSupplier').onclick = () => supplierForm(null);
   $('#btnSupplierCardList').onclick = () => supplierCardModal();
   $('#chkArchived2').onchange = (e) => { state.includeArchived = e.target.checked; renderSuppliers(view); };
-  view.querySelectorAll('[data-edit-sup]').forEach((b) => { b.onclick = () => supplierForm(supplierById(b.dataset.editSup)); });
-  bindRowButtons(view);
 }
 
 /* ---------- Покупатели (справочник) ---------- */
@@ -660,8 +657,8 @@ async function renderSupplierCard(view, supplierId) {
     '<button class="btn btn-small" data-del-op="payment" data-id="' + esc(p.id) + '">Удал.</button></td></tr>').join('');
   view.innerHTML =
     '<div class="toolbar"><a class="btn" href="#/suppliers">← К поставщикам</a>' +
-    '<button class="btn btn-primary" data-add-obl="' + esc(sup.id) + '">＋ Собств</button>' +
-    '<button class="btn btn-success" data-add-pay="' + esc(sup.id) + '">＋ Выплата</button>' +
+    '<button class="btn btn-primary" data-add-obl="' + esc(sup.id) + '">＋ Приход</button>' +
+    '<button class="btn btn-success" data-add-pay="' + esc(sup.id) + '">＋ Оплата</button>' +
     (c.overdue_cents > 0 ? '<button class="btn btn-danger" id="payOverdue">Оплатить просроченное: ' + fmtMoney(c.overdue_cents) + '</button>' : '') +
     '<span class="spacer"></span><button class="btn" id="editSupplierBtn">Изм. поставщика</button><button class="btn" onclick="window.print()">🖨 Печать</button></div>' +
     '<div class="panel"><h2>' + esc(sup.name) + (sup.archived ? ' <span class="badge pending">архив</span>' : '') + '</h2>' +
@@ -673,12 +670,12 @@ async function renderSupplierCard(view, supplierId) {
     '<div><div class="k">УНП</div><div class="v">' + esc(sup.unp || 'не указан') + '</div></div></div>' +
     (sup.note ? '<p class="muted">' + esc(sup.note) + '</p>' : '') +
     balanceChartSVG(c.running) + '</div>' +
-    '<div class="panel"><h3>К оплате (Собств) — погашение по FIFO от раннего срока</h3><div class="table-wrap"><table class="data">' +
+    '<div class="panel"><h3>Приход — погашение по FIFO от раннего срока</h3><div class="table-wrap"><table class="data">' +
     '<thead><tr><th>Срок оплаты</th><th>Поставка</th><th class="num">Сумма</th><th class="num">Оплачено</th><th class="num">Осталось</th><th>Статус</th><th>Документ</th><th>Комментарий</th><th></th></tr></thead><tbody>' +
-    (oblRows || '<tr><td colspan="9" class="muted">Начислений нет.</td></tr>') + '</tbody></table></div></div>' +
-    '<div class="panel"><h3>Выплаты</h3><div class="table-wrap"><table class="data">' +
+    (oblRows || '<tr><td colspan="9" class="muted">Приходов нет.</td></tr>') + '</tbody></table></div></div>' +
+    '<div class="panel"><h3>Оплата</h3><div class="table-wrap"><table class="data">' +
     '<thead><tr><th>Дата</th><th class="num">Сумма</th><th>Документ</th><th>Комментарий</th><th></th></tr></thead><tbody>' +
-    (payRows || '<tr><td colspan="5" class="muted">Выплат нет.</td></tr>') + '</tbody></table></div></div>';
+    (payRows || '<tr><td colspan="5" class="muted">Оплат нет.</td></tr>') + '</tbody></table></div></div>';
   bindRowButtons(view);
   $('#editSupplierBtn').onclick = () => supplierForm(sup);
   const payOverdue = $('#payOverdue');
@@ -687,16 +684,19 @@ async function renderSupplierCard(view, supplierId) {
 }
 
 /* ---------- Операции (журнал) ---------- */
-function operationRowHtml(o) {
+function operationRowHtml(o, showActions = true) {
   const kind = o.kind === 'obligation'
-    ? '<span class="badge partial">Собств</span>' : '<span class="badge paid">Выплата</span>';
+    ? '<span class="badge partial">Приход</span>' : '<span class="badge paid">Оплата</span>';
   const vatDetails = (o.kind === 'obligation' && (o.amount_excl_vat_cents || o.vat_cents))
     ? '<div class="muted">без НДС: ' + fmtMoney(o.amount_excl_vat_cents || 0) + '; НДС: ' + fmtMoney(o.vat_cents || 0) + '</div>'
     : '';
+  const actions = showActions
+    ? '<td class="nowrap"><button class="btn btn-small" data-edit-op="' + o.kind + '" data-id="' + esc(o.id) + '">Изм.</button> ' +
+      '<button class="btn btn-small" data-del-op="' + o.kind + '" data-id="' + esc(o.id) + '">Удал.</button></td>'
+    : '';
   return '<tr><td>' + kind + '</td><td>' + esc(o.supplier_name) + '</td><td class="nowrap">' + fmtDate(o.date) + '</td>' +
     '<td class="num">' + fmtMoney(o.amount_cents) + '</td><td>' + esc(o.doc_number || '') + '</td><td>' + esc(o.comment || '') + vatDetails + '</td>' +
-    '<td class="nowrap"><button class="btn btn-small" data-edit-op="' + o.kind + '" data-id="' + esc(o.id) + '">Изм.</button> ' +
-    '<button class="btn btn-small" data-del-op="' + o.kind + '" data-id="' + esc(o.id) + '">Удал.</button></td></tr>';
+    actions + '</tr>';
 }
 function bindOperationRowActions(root, refresh) {
   root.querySelectorAll('[data-edit-op]').forEach((b) => {
@@ -733,22 +733,22 @@ async function renderOperations(view) {
   if (f.q) params.set('q', f.q);
   view.innerHTML = '<div class="loading">Загрузка операций…</div>';
   const data = await api('/api/operations?' + params.toString());
-  const rows = data.operations.map((o) => operationRowHtml(o)).join('');
+  const rows = data.operations.map((o) => operationRowHtml(o, false)).join('');
   view.innerHTML =
     '<div class="toolbar">' +
     '<select id="fSupplier">' + supplierOptions(f.supplier_id, true) + '</select>' +
     '<select id="fKind"><option value="all"' + (f.kind === 'all' ? ' selected' : '') + '>Все операции</option>' +
-    '<option value="obligation"' + (f.kind === 'obligation' ? ' selected' : '') + '>Только Собств</option>' +
-    '<option value="payment"' + (f.kind === 'payment' ? ' selected' : '') + '>Только выплаты</option></select>' +
+    '<option value="obligation"' + (f.kind === 'obligation' ? ' selected' : '') + '>Только Приход</option>' +
+    '<option value="payment"' + (f.kind === 'payment' ? ' selected' : '') + '>Только оплаты</option></select>' +
     '<input type="date" id="fFrom" value="' + esc(f.from) + '" title="С даты">' +
     '<input type="date" id="fTo" value="' + esc(f.to) + '" title="По дату">' +
     '<input type="text" id="fQ" placeholder="Поиск: поставщик, документ, комментарий" value="' + esc(f.q) + '" style="min-width:250px">' +
     '<button class="btn" id="fClear">Сбросить</button>' +
     '<span class="spacer"></span><span class="muted">Найдено: ' + data.total + (data.total > data.operations.length ? ' (показано ' + data.operations.length + ')' : '') + '</span></div>' +
     '<div class="panel"><h3>Журнал операций</h3><div class="table-wrap"><table class="data">' +
-    '<thead><tr><th>Тип</th><th>Поставщик</th><th>Дата</th><th class="num">Сумма</th><th>Документ</th><th>Комментарий</th><th></th></tr></thead>' +
-    '<tbody>' + (rows || '<tr><td colspan="7" class="muted">Ничего не найдено.</td></tr>') + '</tbody></table></div>' +
-    '<p class="muted">Дата начисления — срок оплаты (с учётом отсрочки). Новые операции — кнопками «＋ Собств» и «＋ Выплата» в шапке.</p></div>';
+    '<thead><tr><th>Тип</th><th>Поставщик</th><th>Дата</th><th class="num">Сумма</th><th>Документ</th><th>Комментарий</th></tr></thead>' +
+    '<tbody>' + (rows || '<tr><td colspan="6" class="muted">Ничего не найдено.</td></tr>') + '</tbody></table></div>' +
+    '<p class="muted">Дата прихода — срок оплаты (с учётом отсрочки). Новые операции — кнопками «＋ Приход» и «＋ Оплата» в шапке.</p></div>';
   const apply = () => {
     state.opsFilters = {
       supplier_id: $('#fSupplier').value, kind: $('#fKind').value,
@@ -760,7 +760,6 @@ async function renderOperations(view) {
   let timer = null;
   $('#fQ').oninput = () => { clearTimeout(timer); timer = setTimeout(apply, 400); };
   $('#fClear').onclick = () => { state.opsFilters = {supplier_id: '', kind: 'all', from: '', to: '', q: ''}; renderOperations(view); };
-  bindOperationRowActions(view, () => renderOperations(view));
 }
 
 /* ---------- Экран «Данные»: импорт/экспорт/настройки ---------- */
@@ -770,7 +769,7 @@ async function renderData(view) {
   const exportYear = new Date().getFullYear();
   view.innerHTML =
     '<div class="panel"><h3>📥 Импорт из Excel</h3>' +
-    '<p>Формат файла — как «Оплаты Строймаркет.xlsx»: лист называется годом, колонки попарно «Собств»/«Выплаты» на каждый день.</p>' +
+    '<p>Формат файла — как «Оплаты Строймаркет.xlsx»: лист называется годом, колонки попарно «Собств»/«Выплаты» на каждый день (в интерфейсе программы — «Приход»/«Оплата»).</p>' +
     '<div class="form-grid">' +
     '<label class="field">Файл .xlsx <input type="file" id="importFile" accept=".xlsx"></label>' +
     '<label class="field">Год, если лист назван не годом (необязательно) <input type="number" id="importYear" placeholder="например, 2025"></label>' +
@@ -792,7 +791,7 @@ async function renderData(view) {
     '<label class="field">Предупреждать о сроке за дней <input type="number" id="setWarn" min="0" max="365" value="' + (st.warn_days || 0) + '"></label></div>' +
     '<div class="modal-actions"><button class="btn btn-primary" id="btnSettings">Сохранить настройки</button></div></div>' +
     '<div class="panel"><h3>ℹ О программе</h3><p>Версия: <b>' + esc(bootData.version) + '</b><br>Файл данных: <code>' + esc(bootData.data_file) + '</code><br>' +
-    'Записей: поставщиков ' + bootData.counts.suppliers + ', начислений ' + bootData.counts.obligations + ', выплат ' + bootData.counts.payments + ', покупателей ' + (bootData.counts.buyers || 0) + '.' +
+    'Записей: поставщиков ' + bootData.counts.suppliers + ', приходов ' + bootData.counts.obligations + ', оплат ' + bootData.counts.payments + ', покупателей ' + (bootData.counts.buyers || 0) + '.' +
     (st.seeded_from ? '<br>Стартовые данные загружены из: ' + esc(st.seeded_from) + '.' : '') + '</p></div>' +
     '<div class="panel danger-zone"><h3>⚠ Опасная зона</h3>' +
     '<p>Сброс удаляет всех поставщиков и операции (настройки сохраняются). Перед сбросом скачайте резервную копию.</p>' +
@@ -812,8 +811,8 @@ async function renderData(view) {
     try {
       const rep = await api(url, {method: 'POST', body: fd});
       $('#importReport').innerHTML = '<div class="panel" style="background:var(--green-bg)"><h4>Импорт выполнен (' + esc(rep.sheet_name) + ', ' + rep.year + ')</h4>' +
-        '<p>Поставщиков: ' + rep.suppliers + ', начислений: ' + rep.obligations + ', выплат: ' + rep.payments + '.<br>' +
-        'Сумма Собств: ' + fmtMoney(rep.total_sobstv_cents) + ', выплачено: ' + fmtMoney(rep.total_paid_cents) +
+        '<p>Поставщиков: ' + rep.suppliers + ', приходов: ' + rep.obligations + ', оплат: ' + rep.payments + '.<br>' +
+        'Сумма прихода: ' + fmtMoney(rep.total_sobstv_cents) + ', оплачено: ' + fmtMoney(rep.total_paid_cents) +
         ', задолженность: <b>' + fmtMoney(rep.total_debt_cents) + '</b>.</p>' +
         (rep.warnings && rep.warnings.length ? '<ul>' + rep.warnings.map((w) => '<li>' + esc(w) + '</li>').join('') + '</ul>' : '') + '</div>';
       await loadSuppliersCached();
@@ -1101,7 +1100,7 @@ function obligationForm(opts) {
     comment: ex ? (ex.comment || '') : '',
   };
   const sup0 = supplierById(init.supplierId);
-  const modal = openModal('<h3>' + (ex ? 'Редактирование: к оплате (Собств)' : 'Новое начисление к оплате (Собств)') + '</h3><div class="form-grid">' +
+  const modal = openModal('<h3>' + (ex ? 'Редактирование: приход' : 'Новый приход') + '</h3><div class="form-grid">' +
     '<label class="field full">Поставщик * <select id="oSupplier">' + supplierOptions(init.supplierId, false) + '</select></label>' +
     '<label class="field">Сумма к оплате * <input type="text" class="money" id="oAmount" inputmode="decimal" placeholder="0,00" value="' + esc(init.amount) + '"></label>' +
     '<label class="field">№ накладной / счёта <input type="text" id="oDoc" value="' + esc(init.doc) + '"></label>' +
@@ -1152,7 +1151,7 @@ function obligationForm(opts) {
     try {
       if (ex) await api('/api/obligations/' + encodeURIComponent(ex.id), {method: 'PUT', json: payload});
       else await api('/api/obligations', {method: 'POST', json: payload});
-      toast('Начисление сохранено', 'ok');
+      toast('Приход сохранён', 'ok');
       await afterMutation(opts.refresh);
     } catch (e) { formError(modal, e.message); }
   };
@@ -1170,12 +1169,12 @@ function paymentForm(opts) {
     doc: ex ? (ex.doc_number || '') : '',
     comment: ex ? (ex.comment || '') : '',
   };
-  const modal = openModal('<h3>' + (ex ? 'Редактирование: выплата' : 'Новая выплата') + '</h3><div class="form-grid">' +
+  const modal = openModal('<h3>' + (ex ? 'Редактирование: оплата' : 'Новая оплата') + '</h3><div class="form-grid">' +
     '<label class="field full">Поставщик * <select id="pSupplier">' + supplierOptions(init.supplierId, false) + '</select>' +
     '<span class="hint" id="pDebtHint"></span></label>' +
-    '<label class="field">Сумма выплаты * <input type="text" class="money" id="pAmount" inputmode="decimal" placeholder="0,00" value="' + esc(init.amount) + '">' +
+    '<label class="field">Сумма оплаты * <input type="text" class="money" id="pAmount" inputmode="decimal" placeholder="0,00" value="' + esc(init.amount) + '">' +
     '<span class="hint">Положительная сумма уменьшает задолженность. Отрицательная — сторно.</span></label>' +
-    '<label class="field">Дата выплаты * <input type="date" id="pDate" value="' + esc(init.date) + '"></label>' +
+    '<label class="field">Дата оплаты * <input type="date" id="pDate" value="' + esc(init.date) + '"></label>' +
     '<label class="field">№ платёжного документа <input type="text" id="pDoc" value="' + esc(init.doc) + '"></label>' +
     '<label class="field">Комментарий <input type="text" id="pComment" value="' + esc(init.comment) + '"></label>' +
     '</div><div class="modal-actions"><button class="btn" id="pCancel">Отмена</button><button class="btn btn-success" id="pSave">Сохранить</button></div>');
@@ -1191,18 +1190,18 @@ function paymentForm(opts) {
   $('#pCancel', modal).onclick = closeModal;
   $('#pSave', modal).onclick = async () => {
     const cents = parseMoneyToCents($('#pAmount', modal).value);
-    if (cents === null || cents === 0) { formError(modal, 'Укажите сумму выплаты, например 1 013,49.'); return; }
+    if (cents === null || cents === 0) { formError(modal, 'Укажите сумму оплаты, например 1 013,49.'); return; }
     const payload = {
       supplier_id: $('#pSupplier', modal).value, amount_cents: cents,
       date: $('#pDate', modal).value,
       doc_number: $('#pDoc', modal).value.trim(), comment: $('#pComment', modal).value.trim(),
     };
     if (!payload.supplier_id) { formError(modal, 'Сначала создайте поставщика.'); return; }
-    if (!payload.date) { formError(modal, 'Укажите дату выплаты.'); return; }
+    if (!payload.date) { formError(modal, 'Укажите дату оплаты.'); return; }
     try {
       if (ex) await api('/api/payments/' + encodeURIComponent(ex.id), {method: 'PUT', json: payload});
       else await api('/api/payments', {method: 'POST', json: payload});
-      toast('Выплата сохранена', 'ok');
+      toast('Оплата сохранена', 'ok');
       await afterMutation(opts.refresh);
     } catch (e) { formError(modal, e.message); }
   };

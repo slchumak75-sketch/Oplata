@@ -24,7 +24,7 @@ type testEnv struct {
 
 func newTestEnv(t *testing.T) testEnv {
 	t.Helper()
-	st, err := store.Open(filepath.Join(t.TempDir(), "data.json"), false)
+	st, err := store.Open(filepath.Join(t.TempDir(), "data.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -239,7 +239,7 @@ func TestBuyersAndSupplierUNP(t *testing.T) {
 }
 
 func TestHostGuard(t *testing.T) {
-	st, err := store.Open(filepath.Join(t.TempDir(), "data.json"), false)
+	st, err := store.Open(filepath.Join(t.TempDir(), "data.json"))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -5,40 +5,29 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/slchumak75-sketch/oplata/pkg/calc"
 	"github.com/slchumak75-sketch/oplata/pkg/model"
 )
 
-// TestSeedReconciliation сверяет встроенный seed с итогами исходного Excel
-// (docs/EXCEL_FORMAT.md): 43 поставщика, Собств 837 334,34, выплаты 811 579,42,
-// задолженность 25 754,92. Если seed перегенерирован другим файлом — обновить тест и доки.
-func TestSeedReconciliation(t *testing.T) {
-	db, err := Decode(SeedJSON)
+// TestOpenCreatesEmptyDB фиксирует требование владельца: в программе нет
+// встроенных сумм из Excel, поэтому первый запуск всегда создаёт пустую базу.
+func TestOpenCreatesEmptyDB(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "sub", "data.json")
+	st, err := Open(path)
 	if err != nil {
-		t.Fatalf("seed нечитаем: %v", err)
+		t.Fatal(err)
 	}
-	if len(db.Suppliers) != 43 || len(db.Obligations) != 438 || len(db.Payments) != 415 {
-		t.Fatalf("seed: поставщиков=%d начислений=%d выплат=%d", len(db.Suppliers), len(db.Obligations), len(db.Payments))
+	db := st.Snapshot()
+	if db.Version != model.SchemaVersion {
+		t.Fatalf("версия=%d, ожидалось %d", db.Version, model.SchemaVersion)
 	}
-	if got := calc.Balance(db.Obligations, db.Payments); got != 2_575_492 {
-		t.Fatalf("seed задолженность=%d коп., ожидалось 2575492 (25 754,92)", got)
+	if len(db.Suppliers) != 0 || len(db.Obligations) != 0 || len(db.Payments) != 0 || len(db.Buyers) != 0 || len(db.Warnings) != 0 {
+		t.Fatalf("первая база должна быть пустой: %+v", db)
 	}
-	names := map[string]int64{}
-	obs, pays := calc.BySupplier(db)
-	for _, s := range db.Suppliers {
-		names[s.Name] = calc.Balance(obs[s.ID], pays[s.ID])
+	if db.Settings.SeededFrom != "" {
+		t.Fatalf("seeded_from=%q, ожидалось пусто", db.Settings.SeededFrom)
 	}
-	want := map[string]int64{
-		"АВИДО": 159045, "Алваис": 23476, "Продмир": 173568, "Культбытхозторг": 85641,
-		"ВергоХоз": 48551, "Система ООО": 1649164, "ТД Комплект": 436047,
-	}
-	for name, cents := range want {
-		if names[name] != cents {
-			t.Fatalf("%s: баланс %d, ожидалось %d", name, names[name], cents)
-		}
-	}
-	if len(db.Warnings) != 1 {
-		t.Fatalf("seed предупреждений=%d, ожидалось 1 (знак выплаты Алваис 11.03.2025)", len(db.Warnings))
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("файл пустой базы не создан: %v", err)
 	}
 }
 
@@ -72,7 +61,7 @@ func TestDecodeMigratesV2(t *testing.T) {
 
 func TestOpenUpdateReload(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "sub", "data.json")
-	st, err := Open(path, false)
+	st, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,7 +83,7 @@ func TestOpenUpdateReload(t *testing.T) {
 	if err == nil {
 		t.Fatal("ожидалась ошибка валидации")
 	}
-	st2, err := Open(path, false)
+	st2, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
 	}

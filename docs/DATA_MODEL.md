@@ -17,7 +17,7 @@
 ```json
 {
   "version": 3,
-  "settings": {"company_name": "Строймаркет", "currency_label": "руб.", "warn_days": 3, "seeded_from": "…"},
+  "settings": {"company_name": "Строймаркет", "currency_label": "руб.", "warn_days": 3},
   "suppliers":   [{"id": "sup-01…", "name": "АВИДО", "unp": "123456789", "deferral_days": 14, "note": "", "archived": false}],
   "obligations": [{"id": "obl-…", "supplier_id": "sup-01…", "due_date": "2025-01-15",
                    "amount_cents": 101349, "amount_excl_vat_cents": 84457, "vat_cents": 16892,
@@ -48,20 +48,22 @@
   `amount_excl_vat_cents + vat_cents = amount_cents` (сумма с НДС); оба нуля означают,
   что разбивки нет (например, импорт из Excel). Панель поставки на вкладке «Таблица»
   вычисляет `amount_cents` именно так.
-- `Obligation` = колонка «Собств», `Payment` = колонка «Выплаты» (в Excel выплаты с минусом — инверсия только в `excelio`).
-- `settings.warn_days` — порог статуса «скоро срок». `seeded_from` — пометка стартовых данных.
+- `Obligation` = «Приход» в GUI / колонка «Собств» в главном листе Excel; `Payment` = «Оплата» / колонка «Выплаты» (в Excel выплаты с минусом — инверсия только в `excelio`).
+- `settings.warn_days` — порог статуса «скоро срок». `seeded_from` — устаревшая пометка бывшего seed в базах, созданных версиями до удаления стартовых данных; в новых базах пусто/отсутствует и сохраняется только для чтения старых файлов.
 - `warnings` — показываются баннером в GUI, пока пользователь не скроет (`PUT /api/settings {clear_warnings:true}`).
 - `version` (= `model.SchemaVersion`, сейчас **3**). v1→v2: добавлены `Supplier.unp` и
   `buyers`; v2→v3: добавлена разбивка начислений по НДС. Миграции — в `store.Decode`
   (старый JSON просто получает пустые/нулевые значения новых полей).
   Менять формат → увеличить версию, добавить миграцию в `store.Decode`/рядом, запись в CHANGELOG и здесь.
 
-IDs: `sup-/obl-/pay-/buy-` + 12 hex-символов (`crypto/rand`); в seed — детерминированные `sup-001…`,
-`obl-000001…` (порядок Excel). Порядок срезов в файле = порядок отображения списков.
+IDs: `sup-/obl-/pay-/buy-` + 12 hex-символов (`crypto/rand`); в старых базах, созданных
+из бывшего seed, могут встречаться детерминированные `sup-001…`, `obl-000001…`.
+Порядок срезов в файле = порядок отображения списков.
 
-**Seed:** `pkg/store/seed.json` встроен в exe (`//go:embed`) и используется только при первом
-запуске (нет файла данных) и без `-no-seed`. Генерируется из Excel: `tools/excel2seed.py`
-(см. BUILD.md). Сверка итогов seed — тест `store.TestSeedReconciliation`.
+**Первый запуск:** встроенного seed больше нет. `store.Open(path)` при отсутствии файла
+создаёт и сохраняет пустую базу `model.NewEmptyDB()` (тест `store.TestOpenCreatesEmptyDB`).
+Существующий файл данных открывается без очистки. Чтобы загрузить исходный Excel 2025,
+нужен ручной импорт на вкладке «Данные».
 
 ## Расчёты (`pkg/calc`, чистые функции)
 
@@ -93,7 +95,8 @@ IDs: `sup-/obl-/pay-/buy-` + 12 hex-символов (`crypto/rand`); в seed �
   (`weekday` 1=пн…7=вс, `is_day_off` с учётом переносов, `holiday_name` — из
   `pkg/calc/holidays.go`); `range_balance_cents` — сумма колонки B за диапазон;
   `balance_cents` — задолженность за всё время (подсказка в GUI). GUI «Таблицы»
-  запрашивает ровно одну неделю с понедельника по воскресенье.
+  запрашивает ровно одну неделю с понедельника по воскресенье и использует
+  `is_day_off` только для шапки дат; поля с суммами не закрашиваются.
 - **Карточка** (`BuildSupplierCard`): FIFO-состояния, выплаты по дате, нарастающий баланс
   по хронологии событий (начисление датой `due_date`, выплата датой `date`).
 
@@ -115,11 +118,11 @@ LAN-режим), `Origin == Host` и — для всех не-GET `/api/*` — �
 | `PUT /api/settings` | Частично: `{company_name?, currency_label?, warn_days?, clear_warnings?}` → bootstrap |
 | `GET /api/suppliers?date=&include_archived=1` | Поставщики со сводками (`calc.SupplierSummary[]`) на дату (по умолчанию сегодня) |
 | `POST /api/suppliers` · `PUT/DELETE /api/suppliers/{id}` | CRUD. Удаление при наличии операций → 400 (предлагается архив) |
-| `GET /api/suppliers/{id}/card?date=` | Карточка: FIFO-обязательства, выплаты, график баланса |
+| `GET /api/suppliers/{id}/card?date=` | Карточка: FIFO-обязательства, оплаты, график баланса |
 | `GET /api/buyers?q=` · `POST /api/buyers` · `PUT/DELETE /api/buyers/{id}` | Справочник покупателей (`name`, `unp`, `note`). Удаление без ограничений (операций нет) |
 | `GET /api/operations?supplier_id=&kind=all\|obligation\|payment&from=&to=&q=&limit=500` | Единый журнал, новые сверху, `{total, operations[]}` |
-| `POST /api/obligations` · `PUT/DELETE /api/obligations/{id}` | Начисление. Если `due_date` пуст, но есть `delivery_date` — срок = поставка + `deferral_days` (или отсрочка поставщика), затем ближайший следующий рабочий день РБ. Необязательные `amount_excl_vat_cents`+`vat_cents` должны в сумме давать `amount_cents` (или `amount_cents=0` — сервер посчитает сумму с НДС) |
-| `POST /api/payments` · `PUT/DELETE /api/payments/{id}` | Выплата |
+| `POST /api/obligations` · `PUT/DELETE /api/obligations/{id}` | Приход (начисление). Если `due_date` пуст, но есть `delivery_date` — срок = поставка + `deferral_days` (или отсрочка поставщика), затем ближайший следующий рабочий день РБ. Необязательные `amount_excl_vat_cents`+`vat_cents` должны в сумме давать `amount_cents` (или `amount_cents=0` — сервер посчитает сумму с НДС) |
+| `POST /api/payments` · `PUT/DELETE /api/payments/{id}` | Оплата |
 | `GET /api/dashboard?date=` | Сводка (`calc.Dashboard`) |
 | `GET /api/matrix?from=&to=` | «Таблица» за диапазон дат (`calc.Matrix`): дни с календарём РБ (`is_day_off`, `holiday_name`…), максимум 371 день. GUI запрашивает одну неделю пн–вс; старый режим `?year=&month=` тоже работает (диапазон = месяц) |
 | `POST /api/import?mode=replace\|merge&year=` (multipart `file`) | Импорт XLSX → `excelio.Report`. `replace` сохраняет текущие настройки; `merge` сопоставляет поставщиков по нормализованному имени |

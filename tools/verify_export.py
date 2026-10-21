@@ -73,7 +73,7 @@ def main() -> int:
     assert round(sobstv_sum, 2) == 837334.34, round(sobstv_sum, 2)
     assert round(sobstv_sum + vyplaty_sum, 2) == EXPECTED_TOTAL
 
-    # Лист «Операции»: заголовок + 853 операции seed-данных.
+    # Лист «Операции»: заголовок + 853 операции исходного Excel.
     ops = wb["Операции"]
     assert ops["A1"].value == "Тип" and ops["B1"].value == "Поставщик"
     assert ops.max_row == 1 + 438 + 415, f"операций строк: {ops.max_row}"
