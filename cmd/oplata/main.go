@@ -11,7 +11,7 @@
 //	-data      путь к файлу данных JSON (по умолчанию %AppData%\Oplata\data.json или OPLATA_DATA)
 //	-portable  данные рядом с exe (oplata-data.json)
 //	-no-open   не открывать браузер автоматически
-//	-no-seed   при первом запуске не загружать стартовые данные из Excel 2025
+//	-no-seed   устарел и игнорируется: встроенных стартовых данных в программе нет
 //	-version   напечатать версию и выйти
 package main
 
@@ -46,7 +46,7 @@ func main() {
 	dataFlag := flag.String("data", "", "путь к файлу данных JSON")
 	portable := flag.Bool("portable", false, "хранить данные рядом с исполняемым файлом")
 	noOpen := flag.Bool("no-open", false, "не открывать браузер")
-	noSeed := flag.Bool("no-seed", false, "не загружать стартовые данные при первом запуске")
+	_ = flag.Bool("no-seed", false, "устарел и игнорируется: стартовых данных в программе нет")
 	showVersion := flag.Bool("version", false, "показать версию и выйти")
 	flag.Parse()
 
@@ -71,7 +71,7 @@ func main() {
 	defer closeLog()
 	logger.Printf("oplata %s: запуск, файл данных %s", version, dataPath)
 
-	st, err := store.Open(dataPath, !*noSeed)
+	st, err := store.Open(dataPath)
 	if err != nil {
 		logger.Printf("ОШИБКА: %v", err)
 		fatal("не удалось открыть файл данных", err)

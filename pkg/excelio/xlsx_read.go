@@ -482,7 +482,7 @@ func gridToDB(g *grid, year int, sheetName string) (*model.DB, *Report, error) {
 			}
 			if pc.kind == "sobstv" {
 				if cv.num < 0 {
-					report.Warnings = append(report.Warnings, fmt.Sprintf("%s, %s: «Собств» с отрицательным знаком (%s) — импортировано как выплата.", name, pc.date, strconv.FormatFloat(cv.num, 'f', 2, 64)))
+					report.Warnings = append(report.Warnings, fmt.Sprintf("%s, %s: «Собств» с отрицательным знаком (%s) — импортировано как оплата.", name, pc.date, strconv.FormatFloat(cv.num, 'f', 2, 64)))
 					db.Payments = append(db.Payments, model.Payment{
 						ID: model.NewID("pay"), SupplierID: sid, Date: pc.date,
 						AmountCents: -model.FloatToCents(cv.num),
@@ -501,8 +501,8 @@ func gridToDB(g *grid, year int, sheetName string) (*model.DB, *Report, error) {
 					AmountCents: -model.FloatToCents(cv.num),
 				}
 				if cv.num > 0 {
-					report.Warnings = append(report.Warnings, fmt.Sprintf("%s, %s: «Выплаты» с положительным знаком (%s) — в Excel выплаты принято писать с минусом. Импортировано как отрицательная выплата (увеличивает задолженность), проверьте запись.", name, pc.date, strconv.FormatFloat(cv.num, 'f', 2, 64)))
-					p.Comment = "Импорт из Excel: выплата была с положительным знаком, проверьте."
+					report.Warnings = append(report.Warnings, fmt.Sprintf("%s, %s: «Выплаты» с положительным знаком (%s) — в Excel выплаты принято писать с минусом. Импортировано как отрицательная оплата (увеличивает задолженность), проверьте запись.", name, pc.date, strconv.FormatFloat(cv.num, 'f', 2, 64)))
+					p.Comment = "Импорт из Excel: оплата была с положительным знаком, проверьте."
 				}
 				db.Payments = append(db.Payments, p)
 			}

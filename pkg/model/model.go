@@ -145,7 +145,7 @@ type Settings struct {
 	CurrencyLabel string `json:"currency_label"`
 	// WarnDays — за сколько дней до срока подсвечивать «скоро срок».
 	WarnDays int `json:"warn_days"`
-	// SeededFrom — откуда взяты стартовые данные (пусто, если база создана вручную).
+	// SeededFrom — устаревшая пометка стартовых данных из старых версий; в новых базах пусто.
 	SeededFrom string `json:"seeded_from,omitempty"`
 }
 
@@ -328,13 +328,13 @@ func (db *DB) Validate() error {
 	}
 	for _, p := range db.Payments {
 		if !ids[p.SupplierID] {
-			return fmt.Errorf("выплата %s: неизвестный поставщик %s", p.ID, p.SupplierID)
+			return fmt.Errorf("оплата %s: неизвестный поставщик %s", p.ID, p.SupplierID)
 		}
 		if !p.Date.Valid() {
-			return fmt.Errorf("выплата %s: некорректная дата %q", p.ID, p.Date)
+			return fmt.Errorf("оплата %s: некорректная дата %q", p.ID, p.Date)
 		}
 		if p.AmountCents == 0 {
-			return fmt.Errorf("выплата %s: нулевая сумма", p.ID)
+			return fmt.Errorf("оплата %s: нулевая сумма", p.ID)
 		}
 	}
 	return nil

@@ -1,5 +1,5 @@
 // Пакет store — хранение базы в JSON-файле: загрузка, атомарное сохранение,
-// резервные копии, стартовые данные (seed) и потокобезопасный доступ.
+// резервные копии и потокобезопасный доступ.
 //
 // Файл данных по умолчанию: <UserConfigDir>/Oplata/data.json
 // (Windows: %AppData%\Oplata\data.json). Резервные копии: подпапка backups,
@@ -7,7 +7,6 @@
 package store
 
 import (
-	_ "embed"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -22,15 +21,6 @@ import (
 
 // MaxBackups — сколько резервных копий хранить.
 const MaxBackups = 20
-
-// SeedJSON — стартовые данные, сгенерированные из «Оплаты Строймаркет.xlsx»
-// скриптом tools/excel2seed.py. Загружаются ТОЛЬКО при первом запуске,
-// когда файла данных ещё нет (и не задан флаг -no-seed / WithNoSeed).
-// Чтобы собрать exe без чужих данных: заменить файл seed.json на пустую базу
-// ({"version":3,...} с пустыми списками) и пересобрать — см. docs/BUILD.md.
-//
-//go:embed seed.json
-var SeedJSON []byte
 
 // Store — потокобезопасная обёртка над *model.DB с сохранением в файл при каждом изменении.
 type Store struct {
@@ -59,12 +49,11 @@ func DefaultDataPath(portable bool) (string, error) {
 	return filepath.Join(dir, "Oplata", "data.json"), nil
 }
 
-// Open загружает базу из файла path. Если файла нет:
-//   - useSeed=true  -> база из встроенного SeedJSON (данные Excel 2025);
-//   - useSeed=false -> пустая база.
-//
-// В обоих случаях файл сразу создаётся на диске, чтобы пользователь видел, где живут данные.
-func Open(path string, useSeed bool) (*Store, error) {
+// Open загружает базу из файла path. Если файла нет, создаётся пустая база:
+// приложение не содержит встроенных сумм из Excel. Исходный файл 2025 года при
+// необходимости загружается вручную через импорт на вкладке «Данные».
+// Файл сразу создаётся на диске, чтобы пользователь видел, где живут данные.
+func Open(path string) (*Store, error) {
 	st := &Store{path: path}
 	data, err := os.ReadFile(path)
 	switch {
@@ -75,15 +64,7 @@ func Open(path string, useSeed bool) (*Store, error) {
 		}
 		st.db = db
 	case os.IsNotExist(err):
-		if useSeed && len(SeedJSON) > 0 {
-			db, err := Decode(SeedJSON)
-			if err != nil {
-				return nil, fmt.Errorf("встроенные стартовые данные повреждены: %w", err)
-			}
-			st.db = db
-		} else {
-			st.db = model.NewEmptyDB()
-		}
+		st.db = model.NewEmptyDB()
 		if err := st.saveLocked(); err != nil {
 			return nil, err
 		}

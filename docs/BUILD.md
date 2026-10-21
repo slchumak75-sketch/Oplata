@@ -6,7 +6,7 @@
 go.mod / pkg/... / cmd/oplata      Корневой (и единственный) модуль: ТОЛЬКО стандартная библиотека Go (go.sum не нужен!)
 .github/workflows/ci.yml           Тесты + сборка oplata.exe при каждом push/PR (артефакты)
 .github/workflows/release.yml      Релиз при пуше тега v*: oplata.exe + zip + SHA256SUMS.txt
-tools/excel2seed.py                Генератор стартовых данных pkg/store/seed.json из Excel
+tools/exportdemo + verify_export.py CI-проверка прямого импорта исходного Excel и последующего экспорта
 ```
 
 > С 2026-10-21 по решению владельца собирается только `oplata.exe`: варианты
@@ -43,7 +43,7 @@ tools/excel2seed.py                Генератор стартовых дан�
 
 ```sh
 # Ядро + браузерный вариант (Linux/macOS/Windows)
-go test ./...                          # все тесты (включая сверку seed с Excel!)
+go test ./...                          # все тесты
 go run ./cmd/oplata -no-open           # сервер на http://127.0.0.1:8765
 go run ./cmd/oplata -data ./dev.json   # отдельный файл данных для экспериментов
 
@@ -57,18 +57,24 @@ GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.version=dev
 при пересборке Go (`go run` — сразу). Синтаксис JS удобно проверять `node --check app.js`.
 
 
-## Перегенерация стартовых данных (seed)
+## Стартовые данные и проверка Excel без seed
+
+Встроенных стартовых данных в `oplata.exe` **нет**: при первом запуске `store.Open`
+создаёт пустую базу `model.NewEmptyDB()`. Исходный `Оплаты Строймаркет.xlsx` остаётся
+в репозитории как эталон формата и при необходимости импортируется вручную через
+вкладку «Данные». Не возвращать `pkg/store/seed.json`, `//go:embed` seed или генератор
+seed без прямого решения владельца.
+
+Ту же сверку импорта/экспорта, что выполняет CI, можно запустить локально:
 
 ```sh
-pip install openpyxl
-python3 tools/excel2seed.py "Оплаты Строймаркет.xlsx" pkg/store/seed.json
-go test ./pkg/store/    # сверит итоги; при другом файле обновить цифры в тесте и docs/EXCEL_FORMAT.md
+go run ./tools/exportdemo /tmp/oplata-2025.xlsx "Оплаты Строймаркет.xlsx"
+python3 tools/verify_export.py /tmp/oplata-2025.xlsx
 ```
 
-Сборка **без** встроенных реальных данных (например, для публичного распространения):
-заменить `pkg/store/seed.json` на пустую базу
-`{"version":3,"settings":{"company_name":"","currency_label":"руб.","warn_days":3},"suppliers":[],"obligations":[],"payments":[],"buyers":[],"warnings":[]}`
-и обновить/отключить `TestSeedReconciliation`.
+`exportdemo` напрямую разбирает оригинал Go-импортёром (`excelio.ParseXLSX`) и пишет
+`ExportXLSX`; `verify_export.py` открывает результат через openpyxl и сверяет итоги с
+`docs/EXCEL_FORMAT.md`.
 
 ## Диагностика проблем
 

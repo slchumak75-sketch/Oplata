@@ -240,10 +240,10 @@ func buildOperationsSheet(db *model.DB) string {
 	}
 	ops := make([]op, 0, len(db.Obligations)+len(db.Payments))
 	for _, o := range db.Obligations {
-		ops = append(ops, op{"Собств (к оплате)", names[o.SupplierID], o.DocNumber, o.Comment, o.DueDate, o.DeliveryDate, o.AmountCents, o.AmountExclVATCents, o.VATCents})
+		ops = append(ops, op{"Приход (к оплате)", names[o.SupplierID], o.DocNumber, o.Comment, o.DueDate, o.DeliveryDate, o.AmountCents, o.AmountExclVATCents, o.VATCents})
 	}
 	for _, p := range db.Payments {
-		ops = append(ops, op{"Выплата", names[p.SupplierID], p.DocNumber, p.Comment, p.Date, "", p.AmountCents, 0, 0})
+		ops = append(ops, op{"Оплата", names[p.SupplierID], p.DocNumber, p.Comment, p.Date, "", p.AmountCents, 0, 0})
 	}
 	slices.SortFunc(ops, func(a, b op) int {
 		if a.date != b.date {
