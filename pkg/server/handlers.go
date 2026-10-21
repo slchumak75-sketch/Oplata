@@ -41,6 +41,7 @@ func (s *Server) handleSuppliersList(w http.ResponseWriter, r *http.Request) {
 
 type supplierRequest struct {
 	Name         string `json:"name"`
+	UNP          string `json:"unp"`
 	DeferralDays int    `json:"deferral_days"`
 	Note         string `json:"note"`
 	Archived     bool   `json:"archived"`
@@ -57,6 +58,7 @@ func (s *Server) handleSupplierCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	created := model.Supplier{ID: model.NewID("sup"), Name: strings.TrimSpace(req.Name),
+		UNP:          model.NormalizeUNP(req.UNP),
 		DeferralDays: req.DeferralDays, Note: req.Note, Archived: req.Archived}
 	err := s.Store.Update(func(db *model.DB) error {
 		db.Suppliers = append(db.Suppliers, created)
@@ -86,6 +88,7 @@ func (s *Server) handleSupplierUpdate(w http.ResponseWriter, r *http.Request) {
 			return fmt.Errorf("укажите название поставщика")
 		}
 		sup.Name = strings.TrimSpace(req.Name)
+		sup.UNP = model.NormalizeUNP(req.UNP)
 		sup.DeferralDays = req.DeferralDays
 		sup.Note = req.Note
 		sup.Archived = req.Archived
@@ -139,6 +142,98 @@ func (s *Server) handleSupplierCard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, card)
+}
+
+// ---------- покупатели (справочник «Карточка покупателя») ----------
+
+func (s *Server) handleBuyersList(w http.ResponseWriter, r *http.Request) {
+	search := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("q")))
+	db := s.Store.Snapshot()
+	buyers := []model.Buyer{}
+	for _, b := range db.Buyers {
+		if search != "" && !strings.Contains(strings.ToLower(b.Name+" "+b.UNP+" "+b.Note), search) {
+			continue
+		}
+		buyers = append(buyers, b)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"buyers": buyers})
+}
+
+type buyerRequest struct {
+	Name string `json:"name"`
+	UNP  string `json:"unp"`
+	Note string `json:"note"`
+}
+
+func (s *Server) handleBuyerCreate(w http.ResponseWriter, r *http.Request) {
+	var req buyerRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, "некорректный JSON: "+err.Error())
+		return
+	}
+	if strings.TrimSpace(req.Name) == "" {
+		writeErr(w, http.StatusBadRequest, "укажите наименование покупателя")
+		return
+	}
+	created := model.Buyer{ID: model.NewID("buy"), Name: strings.TrimSpace(req.Name),
+		UNP: model.NormalizeUNP(req.UNP), Note: strings.TrimSpace(req.Note)}
+	err := s.Store.Update(func(db *model.DB) error {
+		db.Buyers = append(db.Buyers, created)
+		return nil
+	})
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusCreated, created)
+}
+
+func (s *Server) handleBuyerUpdate(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	var req buyerRequest
+	if err := decodeJSON(r, &req); err != nil {
+		writeErr(w, http.StatusBadRequest, "некорректный JSON: "+err.Error())
+		return
+	}
+	var updated *model.Buyer
+	err := s.Store.Update(func(db *model.DB) error {
+		buy := db.BuyerByID(id)
+		if buy == nil {
+			return errNotFound("покупатель не найден")
+		}
+		if strings.TrimSpace(req.Name) == "" {
+			return fmt.Errorf("укажите наименование покупателя")
+		}
+		buy.Name = strings.TrimSpace(req.Name)
+		buy.UNP = model.NormalizeUNP(req.UNP)
+		buy.Note = strings.TrimSpace(req.Note)
+		cp := *buy
+		updated = &cp
+		return nil
+	})
+	if err != nil {
+		writeErr(w, statusForErr(err), err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, updated)
+}
+
+// handleBuyerDelete удаляет покупателя без ограничений: операций с покупателями
+// приложение не ведёт, терять историю нечего (в отличие от поставщиков).
+func (s *Server) handleBuyerDelete(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	err := s.Store.Update(func(db *model.DB) error {
+		if db.BuyerByID(id) == nil {
+			return errNotFound("покупатель не найден")
+		}
+		db.Buyers = slices.DeleteFunc(db.Buyers, func(b model.Buyer) bool { return b.ID == id })
+		return nil
+	})
+	if err != nil {
+		writeErr(w, statusForErr(err), err.Error())
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ---------- операции (журнал) ----------
@@ -526,6 +621,20 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 		current := s.Store.Snapshot()
 		imported.Settings = current.Settings
 		imported.Settings.SeededFrom = ""
+		// В Excel покупателей нет — справочник при замене поставщиков/операций сохраняем.
+		imported.Buyers = current.Buyers
+		// УНП поставщиков в Excel тоже нет — переносим по совпадению наименования, чтобы не терять карточки.
+		unpByName := make(map[string]string, len(current.Suppliers))
+		for _, sup := range current.Suppliers {
+			if sup.UNP != "" {
+				unpByName[model.NormalizeName(sup.Name)] = sup.UNP
+			}
+		}
+		for i := range imported.Suppliers {
+			if unp, ok := unpByName[model.NormalizeName(imported.Suppliers[i].Name)]; ok {
+				imported.Suppliers[i].UNP = unp
+			}
+		}
 		imported.Warnings = report.Warnings
 		err = s.Store.ReplaceAll(imported)
 	case "merge":

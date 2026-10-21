@@ -72,6 +72,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("PUT /api/suppliers/{id}", s.handleSupplierUpdate)
 	mux.HandleFunc("DELETE /api/suppliers/{id}", s.handleSupplierDelete)
 	mux.HandleFunc("GET /api/suppliers/{id}/card", s.handleSupplierCard)
+	mux.HandleFunc("GET /api/buyers", s.handleBuyersList)
+	mux.HandleFunc("POST /api/buyers", s.handleBuyerCreate)
+	mux.HandleFunc("PUT /api/buyers/{id}", s.handleBuyerUpdate)
+	mux.HandleFunc("DELETE /api/buyers/{id}", s.handleBuyerDelete)
 	mux.HandleFunc("GET /api/operations", s.handleOperationsList)
 	mux.HandleFunc("POST /api/obligations", s.handleObligationCreate)
 	mux.HandleFunc("PUT /api/obligations/{id}", s.handleObligationUpdate)
@@ -177,6 +181,7 @@ type bootstrapCounts struct {
 	Suppliers   int `json:"suppliers"`
 	Obligations int `json:"obligations"`
 	Payments    int `json:"payments"`
+	Buyers      int `json:"buyers"`
 }
 
 func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
@@ -184,7 +189,7 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, bootstrapResponse{
 		Version: s.Version, Today: model.Today(), Token: s.token,
 		Settings: db.Settings, Warnings: db.Warnings, DataFile: s.Store.Path(),
-		Counts: bootstrapCounts{len(db.Suppliers), len(db.Obligations), len(db.Payments)},
+		Counts: bootstrapCounts{len(db.Suppliers), len(db.Obligations), len(db.Payments), len(db.Buyers)},
 	})
 }
 

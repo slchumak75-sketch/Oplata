@@ -87,7 +87,7 @@ def main() -> int:
             break  # данные идут сплошным блоком
         sid = f"sup-{len(suppliers) + 1:03d}"
         suppliers.append(OrderedDict([
-            ("id", sid), ("name", name), ("deferral_days", 0), ("note", ""), ("archived", False),
+            ("id", sid), ("name", name), ("unp", ""), ("deferral_days", 0), ("note", ""), ("archived", False),
         ]))
         balance = 0
         for col_idx, iso, kind in columns:
@@ -121,7 +121,7 @@ def main() -> int:
         per_supplier_balance[name] = balance
 
     data = OrderedDict([
-        ("version", 1),
+        ("version", 2),  # схема v2: у поставщиков есть unp, есть справочник покупателей
         ("settings", OrderedDict([
             ("company_name", "Строймаркет"),
             ("currency_label", "руб."),
@@ -131,6 +131,7 @@ def main() -> int:
         ("suppliers", suppliers),
         ("obligations", obligations),
         ("payments", payments),
+        ("buyers", []),  # в Excel покупателей нет — справочник заполняется в приложении
         ("warnings", warnings),
     ])
     with open(dst, "w", encoding="utf-8") as f:

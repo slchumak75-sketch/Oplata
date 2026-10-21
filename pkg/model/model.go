@@ -22,7 +22,8 @@ import (
 
 // SchemaVersion — версия формата файла данных (поле DB.Version).
 // При изменении формата: увеличить, добавить миграцию в pkg/store и запись в CHANGELOG.md.
-const SchemaVersion = 1
+// v2: добавлены Supplier.UNP и справочник покупателей (Buyer). Файлы v1 мигрируют в store.Decode.
+const SchemaVersion = 2
 
 // Date — календарная дата в формате ISO yyyy-mm-dd. Сравнение строк == сравнение дат.
 type Date string
@@ -80,12 +81,26 @@ type Supplier struct {
 	ID string `json:"id"`
 	// Name — название, как в Excel (столбец A). Уникальность контролирует store с нормализацией.
 	Name string `json:"name"`
+	// UNP — учётный номер плательщика (9 символов). Необязательное поле карточки;
+	// в исходном Excel отсутствует, при импорте остаётся пустым.
+	UNP string `json:"unp"`
 	// DeferralDays — отсрочка платежа в днях по умолчанию для этого поставщика.
 	// 0 = не задана (срок оплаты вводится вручную).
 	DeferralDays int    `json:"deferral_days"`
 	Note         string `json:"note"`
 	// Archived — скрыт из основных списков, данные и история сохраняются.
 	Archived bool `json:"archived"`
+}
+
+// Buyer — покупатель (справочник «Карточка покупателя»). Операций с покупателями
+// приложение пока не ведёт — это адресная книга контрагентов: наименование и УНП.
+type Buyer struct {
+	ID string `json:"id"`
+	// Name — наименование покупателя. Уникально с нормализацией, как у поставщиков.
+	Name string `json:"name"`
+	// UNP — учётный номер плательщика (9 символов), необязательно.
+	UNP  string `json:"unp"`
+	Note string `json:"note"`
 }
 
 // Obligation — сумма к оплате за поставленный товар (колонка «Собств»).
@@ -139,6 +154,8 @@ type DB struct {
 	Suppliers   []Supplier   `json:"suppliers"`
 	Obligations []Obligation `json:"obligations"`
 	Payments    []Payment    `json:"payments"`
+	// Buyers — справочник покупателей (схема v2). С расчётами оплат не связан.
+	Buyers []Buyer `json:"buyers"`
 	// Warnings — предупреждения импорта/seed, показываются пользователю баннером,
 	// пока он их не скроет (очистка через PUT /api/settings или сброс базы).
 	Warnings []string `json:"warnings"`
@@ -152,6 +169,7 @@ func NewEmptyDB() *DB {
 		Suppliers:   []Supplier{},
 		Obligations: []Obligation{},
 		Payments:    []Payment{},
+		Buyers:      []Buyer{},
 		Warnings:    []string{},
 	}
 }
@@ -161,6 +179,45 @@ func (db *DB) SupplierByID(id string) *Supplier {
 	for i := range db.Suppliers {
 		if db.Suppliers[i].ID == id {
 			return &db.Suppliers[i]
+		}
+	}
+	return nil
+}
+
+// BuyerByID ищет покупателя по ID (nil, если нет).
+func (db *DB) BuyerByID(id string) *Buyer {
+	for i := range db.Buyers {
+		if db.Buyers[i].ID == id {
+			return &db.Buyers[i]
+		}
+	}
+	return nil
+}
+
+// NormalizeUNP приводит УНП к каноническому виду для хранения и сравнения:
+// без пробелов, в верхнем регистре.
+func NormalizeUNP(s string) string {
+	return strings.ToUpper(strings.Join(strings.Fields(strings.TrimSpace(s)), ""))
+}
+
+// ValidateUNP проверяет УНП, если он указан (пустое значение допустимо).
+// УНП в Беларуси — 9 символов: у организаций цифры, у физлиц — буквы и цифры.
+// Проверка намеренно мягкая (9–15 букв/цифр), чтобы не отвергать нестандартные записи.
+func ValidateUNP(unp string) error {
+	n := NormalizeUNP(unp)
+	if n == "" {
+		return nil
+	}
+	runes := []rune(n)
+	if len(runes) < 9 || len(runes) > 15 {
+		return fmt.Errorf("УНП %q: ожидается 9 символов (допустимо 9–15)", unp)
+	}
+	for _, r := range runes {
+		isDigit := r >= '0' && r <= '9'
+		isLatin := (r >= 'A' && r <= 'Z')
+		isCyrillic := (r >= 'А' && r <= 'Я') || r == 'Ё'
+		if !isDigit && !isLatin && !isCyrillic {
+			return fmt.Errorf("УНП %q: допустимы только буквы и цифры", unp)
 		}
 	}
 	return nil
@@ -182,6 +239,7 @@ func (db *DB) Validate() error {
 	}
 	ids := make(map[string]bool, len(db.Suppliers))
 	names := make(map[string]string, len(db.Suppliers))
+	supplierUNPs := make(map[string]string, len(db.Suppliers))
 	for _, s := range db.Suppliers {
 		if s.ID == "" {
 			return fmt.Errorf("поставщик %q: пустой id", s.Name)
@@ -196,10 +254,47 @@ func (db *DB) Validate() error {
 		if s.DeferralDays < 0 || s.DeferralDays > 3650 {
 			return fmt.Errorf("поставщик %q: отсрочка вне диапазона 0..3650: %d", s.Name, s.DeferralDays)
 		}
+		if err := ValidateUNP(s.UNP); err != nil {
+			return fmt.Errorf("поставщик %q: %w", s.Name, err)
+		}
+		if unp := NormalizeUNP(s.UNP); unp != "" {
+			if prev, ok := supplierUNPs[unp]; ok {
+				return fmt.Errorf("поставщики %q и %q: одинаковый УНП %s", prev, s.Name, unp)
+			}
+			supplierUNPs[unp] = s.Name
+		}
 		if prev, ok := names[NormalizeName(s.Name)]; ok {
 			return fmt.Errorf("поставщики %q и %q: одинаковые названия", prev, s.Name)
 		}
 		names[NormalizeName(s.Name)] = s.Name
+	}
+	buyerIDs := make(map[string]bool, len(db.Buyers))
+	buyerNames := make(map[string]string, len(db.Buyers))
+	buyerUNPs := make(map[string]string, len(db.Buyers))
+	for _, b := range db.Buyers {
+		if b.ID == "" {
+			return fmt.Errorf("покупатель %q: пустой id", b.Name)
+		}
+		if buyerIDs[b.ID] {
+			return fmt.Errorf("дублирующийся id покупателя: %s", b.ID)
+		}
+		buyerIDs[b.ID] = true
+		if strings.TrimSpace(b.Name) == "" {
+			return fmt.Errorf("покупатель %s: пустое наименование", b.ID)
+		}
+		if err := ValidateUNP(b.UNP); err != nil {
+			return fmt.Errorf("покупатель %q: %w", b.Name, err)
+		}
+		if unp := NormalizeUNP(b.UNP); unp != "" {
+			if prev, ok := buyerUNPs[unp]; ok {
+				return fmt.Errorf("покупатели %q и %q: одинаковый УНП %s", prev, b.Name, unp)
+			}
+			buyerUNPs[unp] = b.Name
+		}
+		if prev, ok := buyerNames[NormalizeName(b.Name)]; ok {
+			return fmt.Errorf("покупатели %q и %q: одинаковые наименования", prev, b.Name)
+		}
+		buyerNames[NormalizeName(b.Name)] = b.Name
 	}
 	for _, o := range db.Obligations {
 		if !ids[o.SupplierID] {

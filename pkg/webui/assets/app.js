@@ -11,7 +11,7 @@ const MONTHS_RU = ['', 'январь', 'февраль', 'март', 'апрел
 const STATUS_RU = {paid: 'Оплачено', partial: 'Частично', overdue: 'Просрочено', pending: 'Срок не наступил', due_soon: 'Скоро срок'};
 
 const state = {
-  token: '', today: '', settings: {}, suppliers: null,
+  token: '', today: '', settings: {}, suppliers: null, buyers: null,
   dashboardDate: '', matrixYear: 0, matrixMonth: 0,
   opsFilters: {supplier_id: '', kind: 'all', from: '', to: '', q: ''},
   includeArchived: false,
@@ -128,6 +128,14 @@ function supplierById(id) {
   const found = (state.suppliers || []).find((s) => s.supplier.id === id);
   return found ? found.supplier : null;
 }
+async function loadBuyersCached() {
+  const data = await api('/api/buyers');
+  state.buyers = data.buyers;
+  return state.buyers;
+}
+function buyerById(id) {
+  return (state.buyers || []).find((b) => b.id === id) || null;
+}
 
 async function boot() {
   try {
@@ -142,9 +150,11 @@ async function boot() {
     $('#companyName').textContent = state.settings.company_name || '';
     document.title = 'Оплаты — ' + (state.settings.company_name || '');
     $('#footerInfo').textContent = 'Версия ' + bootData.version + ' · Файл данных: ' + bootData.data_file +
-      ' · Поставщиков: ' + bootData.counts.suppliers + ', начислений: ' + bootData.counts.obligations + ', выплат: ' + bootData.counts.payments;
+      ' · Поставщиков: ' + bootData.counts.suppliers + ', начислений: ' + bootData.counts.obligations + ', выплат: ' + bootData.counts.payments +
+      ', покупателей: ' + (bootData.counts.buyers || 0);
     renderWarnings(bootData.warnings);
     await loadSuppliersCached();
+    await loadBuyersCached();
     route();
   } catch (e) {
     $('#view').innerHTML = '<div class="panel"><h2>Нет связи с программой</h2><p>' + esc(e.message) +
@@ -179,6 +189,7 @@ function route() {
     else if (name === 'matrix') await renderMatrix(view);
     else if (name === 'suppliers') await renderSuppliers(view);
     else if (name === 'supplier') await renderSupplierCard(view, decodeURIComponent(parts[1] || ''));
+    else if (name === 'buyers') await renderBuyers(view);
     else if (name === 'operations') await renderOperations(view);
     else if (name === 'data') await renderData(view);
     else await renderDashboard(view);
@@ -330,6 +341,7 @@ async function renderSuppliers(view) {
     .filter((s) => state.includeArchived || !s.supplier.archived)
     .map((s) => '<tr><td><a href="#/supplier/' + encodeURIComponent(s.supplier.id) + '">' + esc(s.supplier.name) + '</a>' +
       (s.supplier.archived ? ' <span class="badge pending">архив</span>' : '') + '</td>' +
+      '<td>' + esc(s.supplier.unp || '—') + '</td>' +
       '<td class="num">' + fmtMoney(s.balance_cents) + '</td>' +
       '<td class="num' + (s.overdue_cents > 0 ? ' overdue' : '') + '">' + (s.overdue_cents ? fmtMoney(s.overdue_cents) : '—') + '</td>' +
       '<td class="center">' + (s.supplier.deferral_days ? s.supplier.deferral_days + ' дн.' : '—') + '</td>' +
@@ -338,15 +350,57 @@ async function renderSuppliers(view) {
       '<button class="btn btn-small" data-add-obl="' + esc(s.supplier.id) + '">＋ Собств</button> ' +
       '<button class="btn btn-small" data-add-pay="' + esc(s.supplier.id) + '">＋ Выплата</button></td></tr>').join('');
   view.innerHTML =
-    '<div class="toolbar"><button class="btn btn-primary" id="btnNewSupplier">＋ Новый поставщик</button>' +
+    '<div class="toolbar"><button class="btn btn-primary" id="btnNewSupplier">＋ Добавить поставщика</button>' +
+    '<button class="btn" id="btnSupplierCardList">🏭 Карточка поставщика</button>' +
     '<label><input type="checkbox" id="chkArchived2"' + (state.includeArchived ? ' checked' : '') + '> показывать архивных</label></div>' +
     '<div class="panel"><h3>Поставщики (' + state.suppliers.length + ')</h3><div class="table-wrap"><table class="data">' +
-    '<thead><tr><th>Название</th><th class="num">Задолженность</th><th class="num">Просрочено</th><th>Отсрочка</th><th>Примечание</th><th></th></tr></thead>' +
+    '<thead><tr><th>Наименование поставщика</th><th>УНП</th><th class="num">Задолженность</th><th class="num">Просрочено</th><th>Отсрочка</th><th>Примечание</th><th></th></tr></thead>' +
     '<tbody>' + rows + '</tbody></table></div></div>';
   $('#btnNewSupplier').onclick = () => supplierForm(null);
+  $('#btnSupplierCardList').onclick = () => supplierCardModal();
   $('#chkArchived2').onchange = (e) => { state.includeArchived = e.target.checked; renderSuppliers(view); };
   view.querySelectorAll('[data-edit-sup]').forEach((b) => { b.onclick = () => supplierForm(supplierById(b.dataset.editSup)); });
   bindRowButtons(view);
+}
+
+/* ---------- Покупатели (справочник) ---------- */
+async function renderBuyers(view) {
+  view.innerHTML = '<div class="loading">Загрузка покупателей…</div>';
+  await loadBuyersCached();
+  const query = (state.buyersQuery || '').toLowerCase();
+  const rows = (state.buyers || [])
+    .filter((b) => !query || (b.name + ' ' + (b.unp || '') + ' ' + (b.note || '')).toLowerCase().includes(query))
+    .map((b) => '<tr><td>' + esc(b.name) + '</td><td>' + esc(b.unp || '—') + '</td><td>' + esc(b.note || '') + '</td>' +
+      '<td class="nowrap"><button class="btn btn-small" data-edit-buyer="' + esc(b.id) + '">Изм.</button> ' +
+      '<button class="btn btn-small btn-danger" data-del-buyer="' + esc(b.id) + '">Удалить покупателя</button></td></tr>').join('');
+  view.innerHTML =
+    '<div class="toolbar"><button class="btn btn-primary" id="btnNewBuyer">＋ Добавить покупателя</button>' +
+    '<button class="btn" id="btnBuyerCardList">🛒 Карточка покупателя</button>' +
+    '<input type="text" id="buyerSearch" placeholder="Поиск по наименованию или УНП" value="' + esc(state.buyersQuery || '') + '" style="min-width:260px"></div>' +
+    '<div class="panel"><h3>Покупатели (' + (state.buyers || []).length + ')</h3><div class="table-wrap"><table class="data">' +
+    '<thead><tr><th>Наименование покупателя</th><th>УНП</th><th>Примечание</th><th></th></tr></thead>' +
+    '<tbody>' + (rows || '<tr><td colspan="4" class="muted">Покупателей пока нет. Добавьте первого кнопкой выше.</td></tr>') + '</tbody></table></div>' +
+    '<p class="muted">Справочник контрагентов: хранятся наименование и УНП. Операции с покупателями программа пока не ведёт.</p></div>';
+  $('#btnNewBuyer').onclick = () => buyerForm(null);
+  $('#btnBuyerCardList').onclick = () => buyerCardModal();
+  let searchTimer = null;
+  $('#buyerSearch').oninput = (e) => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => { state.buyersQuery = e.target.value.trim(); renderBuyers(view); }, 300);
+  };
+  view.querySelectorAll('[data-edit-buyer]').forEach((b) => { b.onclick = () => buyerForm(buyerById(b.dataset.editBuyer)); });
+  view.querySelectorAll('[data-del-buyer]').forEach((b) => {
+    b.onclick = async () => {
+      const buy = buyerById(b.dataset.delBuyer);
+      if (!await confirmDialog('Удаление покупателя', 'Удалить покупателя «' + (buy ? buy.name : '') + '»?')) return;
+      try {
+        await api('/api/buyers/' + encodeURIComponent(b.dataset.delBuyer), {method: 'DELETE'});
+        toast('Покупатель удалён', 'ok');
+        await loadBuyersCached();
+        renderBuyers(view);
+      } catch (e) { toast(e.message, 'error'); }
+    };
+  });
 }
 
 /* ---------- Карточка поставщика ---------- */
@@ -399,7 +453,8 @@ async function renderSupplierCard(view, supplierId) {
     '<div><div class="k">Задолженность</div><div class="v">' + fmtMoney(c.balance_cents) + ' ' + esc(state.settings.currency_label || '') + '</div></div>' +
     '<div><div class="k">Просрочено</div><div class="v" style="color:var(--red)">' + fmtMoney(c.overdue_cents) + '</div></div>' +
     '<div><div class="k">Переплата</div><div class="v">' + fmtMoney(c.overpaid_cents) + '</div></div>' +
-    '<div><div class="k">Отсрочка</div><div class="v">' + (sup.deferral_days ? sup.deferral_days + ' дн.' : 'не задана') + '</div></div></div>' +
+    '<div><div class="k">Отсрочка</div><div class="v">' + (sup.deferral_days ? sup.deferral_days + ' дн.' : 'не задана') + '</div></div>' +
+    '<div><div class="k">УНП</div><div class="v">' + esc(sup.unp || 'не указан') + '</div></div></div>' +
     (sup.note ? '<p class="muted">' + esc(sup.note) + '</p>' : '') +
     balanceChartSVG(c.running) + '</div>' +
     '<div class="panel"><h3>К оплате (Собств) — погашение по FIFO от раннего срока</h3><div class="table-wrap"><table class="data">' +
@@ -518,7 +573,7 @@ async function renderData(view) {
     '<label class="field">Предупреждать о сроке за дней <input type="number" id="setWarn" min="0" max="365" value="' + (st.warn_days || 0) + '"></label></div>' +
     '<div class="modal-actions"><button class="btn btn-primary" id="btnSettings">Сохранить настройки</button></div></div>' +
     '<div class="panel"><h3>ℹ О программе</h3><p>Версия: <b>' + esc(bootData.version) + '</b><br>Файл данных: <code>' + esc(bootData.data_file) + '</code><br>' +
-    'Записей: поставщиков ' + bootData.counts.suppliers + ', начислений ' + bootData.counts.obligations + ', выплат ' + bootData.counts.payments + '.' +
+    'Записей: поставщиков ' + bootData.counts.suppliers + ', начислений ' + bootData.counts.obligations + ', выплат ' + bootData.counts.payments + ', покупателей ' + (bootData.counts.buyers || 0) + '.' +
     (st.seeded_from ? '<br>Стартовые данные загружены из: ' + esc(st.seeded_from) + '.' : '') + '</p></div>' +
     '<div class="panel danger-zone"><h3>⚠ Опасная зона</h3>' +
     '<p>Сброс удаляет всех поставщиков и операции (настройки сохраняются). Перед сбросом скачайте резервную копию.</p>' +
@@ -556,6 +611,7 @@ async function renderData(view) {
       await api('/api/restore', {method: 'POST', body: fd});
       toast('База восстановлена', 'ok');
       await loadSuppliersCached();
+      await loadBuyersCached();
       renderData(view);
     } catch (e) { toast(e.message, 'error'); }
   };
@@ -576,6 +632,7 @@ async function renderData(view) {
       await api('/api/reset', {method: 'POST', json: {confirm: 'RESET'}});
       toast('База очищена', 'ok');
       await loadSuppliersCached();
+      await loadBuyersCached();
       location.hash = '#/dashboard';
       route();
     } catch (e) { toast(e.message, 'error'); }
@@ -597,20 +654,22 @@ async function afterMutation(refresh) {
   if (refresh) refresh(); else route();
 }
 function supplierForm(existing, refresh) {
-  const s = existing || {name: '', deferral_days: 0, note: '', archived: false};
-  const modal = openModal('<h3>' + (existing ? 'Поставщик: ' + esc(s.name) : 'Новый поставщик') + '</h3><div class="form-grid">' +
-    '<label class="field full">Название * <input type="text" id="supName" value="' + esc(s.name) + '"></label>' +
+  const s = existing || {name: '', unp: '', deferral_days: 0, note: '', archived: false};
+  const modal = openModal('<h3>' + (existing ? 'Карточка поставщика: ' + esc(s.name) : 'Новый поставщик') + '</h3><div class="form-grid">' +
+    '<label class="field full">Наименование поставщика * <input type="text" id="supName" value="' + esc(s.name) + '"></label>' +
+    '<label class="field">УНП <input type="text" id="supUnp" value="' + esc(s.unp || '') + '" placeholder="9 символов"><span class="hint">Учётный номер плательщика, необязательно.</span></label>' +
     '<label class="field">Отсрочка платежа, дней <input type="number" id="supDeferral" min="0" max="3650" value="' + (s.deferral_days || 0) + '">' +
     '<span class="hint">Срок оплаты будет предлагаться как дата поставки + отсрочка. 0 — вводить срок вручную.</span></label>' +
     '<label class="field">Примечание <input type="text" id="supNote" value="' + esc(s.note || '') + '"></label>' +
     (existing ? '<label class="field full"><span><input type="checkbox" id="supArchived"' + (s.archived ? ' checked' : '') + '> В архиве (скрывать из списков, историю сохранить)</span></label>' : '') +
     '</div><div class="modal-actions">' +
-    (existing ? '<button class="btn btn-danger" id="supDelete" style="margin-right:auto">Удалить</button>' : '') +
-    '<button class="btn" id="supCancel">Отмена</button><button class="btn btn-primary" id="supSave">Сохранить</button></div>');
+    (existing ? '<button class="btn btn-danger" id="supDelete" style="margin-right:auto">Удалить поставщика</button>' : '') +
+    '<button class="btn" id="supCancel">Отмена</button><button class="btn btn-primary" id="supSave">' + (existing ? 'Сохранить' : 'Добавить поставщика') + '</button></div>');
   $('#supCancel', modal).onclick = closeModal;
   $('#supSave', modal).onclick = async () => {
     const payload = {
       name: $('#supName', modal).value.trim(),
+      unp: $('#supUnp', modal).value.trim(),
       deferral_days: parseInt($('#supDeferral', modal).value, 10) || 0,
       note: $('#supNote', modal).value.trim(),
       archived: existing ? $('#supArchived', modal).checked : false,
@@ -635,6 +694,180 @@ function supplierForm(existing, refresh) {
   };
   const nameInput = $('#supName', modal);
   nameInput.focus();
+}
+
+function buyerForm(existing, refresh) {
+  const b = existing || {name: '', unp: '', note: ''};
+  const modal = openModal('<h3>' + (existing ? 'Карточка покупателя: ' + esc(b.name) : 'Новый покупатель') + '</h3><div class="form-grid">' +
+    '<label class="field full">Наименование покупателя * <input type="text" id="buyName" value="' + esc(b.name) + '"></label>' +
+    '<label class="field">УНП <input type="text" id="buyUnp" value="' + esc(b.unp || '') + '" placeholder="9 символов"><span class="hint">Учётный номер плательщика, необязательно.</span></label>' +
+    '<label class="field">Примечание <input type="text" id="buyNote" value="' + esc(b.note || '') + '"></label>' +
+    '</div><div class="modal-actions">' +
+    (existing ? '<button class="btn btn-danger" id="buyDelete" style="margin-right:auto">Удалить покупателя</button>' : '') +
+    '<button class="btn" id="buyCancel">Отмена</button><button class="btn btn-primary" id="buySave">' + (existing ? 'Сохранить' : 'Добавить покупателя') + '</button></div>');
+  $('#buyCancel', modal).onclick = closeModal;
+  $('#buySave', modal).onclick = async () => {
+    const payload = {
+      name: $('#buyName', modal).value.trim(),
+      unp: $('#buyUnp', modal).value.trim(),
+      note: $('#buyNote', modal).value.trim(),
+    };
+    if (!payload.name) { formError(modal, 'Укажите наименование покупателя.'); return; }
+    try {
+      if (existing) await api('/api/buyers/' + encodeURIComponent(existing.id), {method: 'PUT', json: payload});
+      else await api('/api/buyers', {method: 'POST', json: payload});
+      toast('Покупатель сохранён', 'ok');
+      closeModal();
+      await loadBuyersCached();
+      if (refresh) refresh(); else route();
+    } catch (e) { formError(modal, e.message); }
+  };
+  const delBtn = $('#buyDelete', modal);
+  if (delBtn) delBtn.onclick = async () => {
+    if (!await confirmDialog('Удаление покупателя', 'Удалить покупателя «' + b.name + '»?')) return;
+    try {
+      await api('/api/buyers/' + encodeURIComponent(existing.id), {method: 'DELETE'});
+      toast('Покупатель удалён', 'ok');
+      closeModal();
+      await loadBuyersCached();
+      if (refresh) refresh(); else route();
+    } catch (e) { toast(e.message, 'error'); }
+  };
+  $('#buyName', modal).focus();
+}
+
+// supplierCardModal — окно «Карточка поставщика» из синей шапки:
+// выбор поставщика, наименование/УНП/отсрочка, кнопки Добавить/Удалить/Сохранить.
+async function supplierCardModal() {
+  if (!state.suppliers) await loadSuppliersCached();
+  const list = state.suppliers || [];
+  const first = list.length ? list[0].supplier : null;
+  const modal = openModal('<h3>🏭 Карточка поставщика</h3><div class="form-grid">' +
+    '<label class="field full">Поставщик <select id="scSelect">' + supplierOptions(first ? first.id : '', false) + '</select></label>' +
+    '<label class="field full">Наименование поставщика * <input type="text" id="scName"></label>' +
+    '<label class="field">УНП <input type="text" id="scUnp" placeholder="9 символов"></label>' +
+    '<label class="field">Отсрочка платежа, дней <input type="number" id="scDeferral" min="0" max="3650">' +
+    '<span class="hint">Срок оплаты = дата поставки + отсрочка. 0 — срок вручную.</span></label>' +
+    '<label class="field full">Примечание <input type="text" id="scNote"></label>' +
+    '<label class="field full"><span><input type="checkbox" id="scArchived"> В архиве (скрывать из списков, историю сохранить)</span></label>' +
+    '</div><div class="modal-actions">' +
+    '<button class="btn btn-danger" id="scDelete" style="margin-right:auto">Удалить поставщика</button>' +
+    '<button class="btn" id="scClose">Закрыть</button>' +
+    '<button class="btn" id="scOpen">Операции и долги →</button>' +
+    '<button class="btn btn-success" id="scAdd">＋ Добавить поставщика</button>' +
+    '<button class="btn btn-primary" id="scSave">Сохранить</button></div>');
+  const fill = () => {
+    const sup = supplierById($('#scSelect', modal).value);
+    const has = !!sup;
+    $('#scName', modal).value = has ? sup.name : '';
+    $('#scUnp', modal).value = has ? (sup.unp || '') : '';
+    $('#scDeferral', modal).value = has ? (sup.deferral_days || 0) : 0;
+    $('#scNote', modal).value = has ? (sup.note || '') : '';
+    $('#scArchived', modal).checked = has ? !!sup.archived : false;
+    $('#scDelete', modal).disabled = !has;
+    $('#scSave', modal).disabled = !has;
+    $('#scOpen', modal).disabled = !has;
+  };
+  $('#scSelect', modal).onchange = fill;
+  fill();
+  $('#scClose', modal).onclick = closeModal;
+  $('#scAdd', modal).onclick = () => supplierForm(null);
+  $('#scOpen', modal).onclick = () => {
+    const id = $('#scSelect', modal).value;
+    closeModal();
+    location.hash = '#/supplier/' + encodeURIComponent(id);
+    route();
+  };
+  $('#scSave', modal).onclick = async () => {
+    const id = $('#scSelect', modal).value;
+    const payload = {
+      name: $('#scName', modal).value.trim(),
+      unp: $('#scUnp', modal).value.trim(),
+      deferral_days: parseInt($('#scDeferral', modal).value, 10) || 0,
+      note: $('#scNote', modal).value.trim(),
+      archived: $('#scArchived', modal).checked,
+    };
+    if (!payload.name) { formError(modal, 'Укажите наименование поставщика.'); return; }
+    try {
+      await api('/api/suppliers/' + encodeURIComponent(id), {method: 'PUT', json: payload});
+      toast('Карточка поставщика сохранена', 'ok');
+      closeModal();
+      await loadSuppliersCached();
+      route();
+    } catch (e) { formError(modal, e.message); }
+  };
+  $('#scDelete', modal).onclick = async () => {
+    const sup = supplierById($('#scSelect', modal).value);
+    if (!sup) return;
+    if (!await confirmDialog('Удаление поставщика', 'Удалить поставщика «' + sup.name + '»? Возможно только без операций, иначе используйте архив.')) return;
+    try {
+      await api('/api/suppliers/' + encodeURIComponent(sup.id), {method: 'DELETE'});
+      toast('Поставщик удалён', 'ok');
+      closeModal();
+      await loadSuppliersCached();
+      route();
+    } catch (e) { toast(e.message, 'error'); }
+  };
+}
+
+// buyerCardModal — окно «Карточка покупателя» из синей шапки:
+// выбор покупателя, наименование/УНП, кнопки Добавить/Удалить/Сохранить.
+async function buyerCardModal() {
+  if (!state.buyers) await loadBuyersCached();
+  const list = state.buyers || [];
+  const options = list.map((b) => '<option value="' + esc(b.id) + '">' + esc(b.name) + '</option>').join('');
+  const modal = openModal('<h3>🛒 Карточка покупателя</h3><div class="form-grid">' +
+    '<label class="field full">Покупатель <select id="bcSelect">' + options + '</select>' +
+    (list.length ? '' : '<span class="hint">Покупателей пока нет — добавьте первого кнопкой ниже.</span>') + '</label>' +
+    '<label class="field full">Наименование покупателя * <input type="text" id="bcName"></label>' +
+    '<label class="field">УНП <input type="text" id="bcUnp" placeholder="9 символов"></label>' +
+    '<label class="field">Примечание <input type="text" id="bcNote"></label>' +
+    '</div><div class="modal-actions">' +
+    '<button class="btn btn-danger" id="bcDelete" style="margin-right:auto">Удалить покупателя</button>' +
+    '<button class="btn" id="bcClose">Закрыть</button>' +
+    '<button class="btn btn-success" id="bcAdd">＋ Добавить покупателя</button>' +
+    '<button class="btn btn-primary" id="bcSave">Сохранить</button></div>');
+  const fill = () => {
+    const buy = buyerById($('#bcSelect', modal).value);
+    const has = !!buy;
+    $('#bcName', modal).value = has ? buy.name : '';
+    $('#bcUnp', modal).value = has ? (buy.unp || '') : '';
+    $('#bcNote', modal).value = has ? (buy.note || '') : '';
+    $('#bcDelete', modal).disabled = !has;
+    $('#bcSave', modal).disabled = !has;
+  };
+  $('#bcSelect', modal).onchange = fill;
+  fill();
+  $('#bcClose', modal).onclick = closeModal;
+  $('#bcAdd', modal).onclick = () => buyerForm(null);
+  $('#bcSave', modal).onclick = async () => {
+    const id = $('#bcSelect', modal).value;
+    const payload = {
+      name: $('#bcName', modal).value.trim(),
+      unp: $('#bcUnp', modal).value.trim(),
+      note: $('#bcNote', modal).value.trim(),
+    };
+    if (!payload.name) { formError(modal, 'Укажите наименование покупателя.'); return; }
+    try {
+      await api('/api/buyers/' + encodeURIComponent(id), {method: 'PUT', json: payload});
+      toast('Карточка покупателя сохранена', 'ok');
+      closeModal();
+      await loadBuyersCached();
+      route();
+    } catch (e) { formError(modal, e.message); }
+  };
+  $('#bcDelete', modal).onclick = async () => {
+    const buy = buyerById($('#bcSelect', modal).value);
+    if (!buy) return;
+    if (!await confirmDialog('Удаление покупателя', 'Удалить покупателя «' + buy.name + '»?')) return;
+    try {
+      await api('/api/buyers/' + encodeURIComponent(buy.id), {method: 'DELETE'});
+      toast('Покупатель удалён', 'ok');
+      closeModal();
+      await loadBuyersCached();
+      route();
+    } catch (e) { toast(e.message, 'error'); }
+  };
 }
 
 function obligationForm(opts) {
@@ -743,6 +976,8 @@ function paymentForm(opts) {
 }
 
 /* ---------- шапка ---------- */
+$('#btnSupplierCard').onclick = () => supplierCardModal();
+$('#btnBuyerCard').onclick = () => buyerCardModal();
 $('#btnAddObligation').onclick = async () => {
   if (!state.suppliers) await loadSuppliersCached();
   if (!state.suppliers || state.suppliers.length === 0) { toast('Сначала создайте поставщика (вкладка «Поставщики»)', 'error'); return; }
