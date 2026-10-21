@@ -5,6 +5,9 @@ name: Release
 # В релиз попадают: oplata.exe (единственный вариант приложения),
 # zip с ним и SHA256SUMS.txt.
 # Теги с суффиксом (v0.1.0-beta.1) помечаются как pre-release.
+#
+# Упрощение после v0.7.0: тесты и нативная Windows-сборка выполняются параллельно,
+# а упаковка готового EXE делается на Linux (zip + sha256sum) без третьего Windows-runner.
 
 on:
   push:
@@ -32,7 +35,6 @@ jobs:
 
   build-windows:
     name: Сборка oplata.exe (Windows)
-    needs: test
     runs-on: windows-latest
     defaults:
       run:
@@ -56,8 +58,8 @@ jobs:
 
   release:
     name: GitHub Release
-    needs: [build-windows]
-    runs-on: windows-latest
+    needs: [test, build-windows]
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@v8
         with:
@@ -65,19 +67,15 @@ jobs:
           path: dist
           merge-multiple: true
       - name: ZIP-архив + контрольные суммы
-        shell: pwsh
         run: |
-          # Список файлов фиксируем ДО записи SHA256SUMS.txt и сам файл сумм исключаем:
-          # иначе Get-ChildItem (стриминговый конвейер) может подобрать SHA256SUMS.txt,
-          # пока Out-File его держит, и Get-FileHash упадёт по блокировке (релиз v0.1.0, 1-я попытка).
-          $exe = @(Get-ChildItem dist -Filter *.exe -File)
-          if ($exe.Count -eq 0) { echo "::error title=release::в dist нет ни одного exe"; Get-ChildItem dist -Recurse | ForEach-Object { echo "::error title=release dist::$($_.FullName)" }; exit 1 }
-          echo "::notice title=release dist::$($exe.Name -join ', ')"
-          Compress-Archive -Path $exe.FullName -DestinationPath ("dist/oplata-" + "${{ github.ref_name }}" + "-windows-amd64.zip")
-          $files = @(Get-ChildItem dist -File | Where-Object { $_.Name -ne 'SHA256SUMS.txt' } | Sort-Object Name)
-          $lines = @($files | ForEach-Object { (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower() + "  " + $_.Name })
-          $lines | Out-File -Encoding ascii dist/SHA256SUMS.txt
-          $lines | ForEach-Object { echo "::notice title=sha256::$_" }
+          set -euo pipefail
+          test -s dist/oplata.exe
+          zip_name="oplata-${GITHUB_REF_NAME}-windows-amd64.zip"
+          echo "::notice title=release dist::oplata.exe"
+          (cd dist && zip -9 "$zip_name" oplata.exe >/dev/null)
+          (cd dist && sha256sum "$zip_name" oplata.exe > SHA256SUMS.txt)
+          while IFS= read -r line; do echo "::notice title=sha256::$line"; done < dist/SHA256SUMS.txt
+          ls -lh dist/
       - uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}

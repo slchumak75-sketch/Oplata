@@ -136,6 +136,22 @@ func PaymentDueDate(delivery model.Date, deferralDays int) model.Date {
 	return NextWorkingDay(delivery.AddDays(deferralDays))
 }
 
+// DeliveryDateForDueDate восстанавливает дату поставки по известному сроку оплаты
+// и отсрочке. Если срок был перенесён через несколько нерабочих дней, ему может
+// соответствовать несколько дат поставки; выбирается самая ранняя из них — та,
+// которую дала бы обычная поставка перед этим отрезком нерабочих дней. Для срока,
+// вручную поставленного на нерабочий день, возвращается due - отсрочка.
+func DeliveryDateForDueDate(due model.Date, deferralDays int) model.Date {
+	candidate := due.AddDays(-deferralDays)
+	for {
+		previous := candidate.AddDays(-1)
+		if PaymentDueDate(previous, deferralDays) != due {
+			return candidate
+		}
+		candidate = previous
+	}
+}
+
 // WeekdayMon1 возвращает день недели: 1 = понедельник … 7 = воскресенье.
 func WeekdayMon1(date model.Date) int {
 	// time.Weekday: 0 = воскресенье … 6 = суббота.

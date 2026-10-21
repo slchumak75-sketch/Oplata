@@ -1,15 +1,25 @@
 name: CI
 
-# Сборка и тесты при каждом push и в pull request'ах.
-# Артефакт (скачивается со страницы запуска во вкладке Actions):
-#   - oplata-windows-amd64  : oplata.exe — единственный вариант приложения
-#     (решение владельца от 2026-10-21: console- и Wails-варианты отброшены).
-# Релизы по тегам v* делает .github/workflows/release.yml.
+# Быстрая проверка изменений и тестовая сборка единственного варианта приложения.
+# До v0.7.0 этот workflow запускался и на push рабочей ветки, и на PR с тем же
+# коммитом, а затем ещё ждал отдельный Windows-runner. Теперь:
+#   - автоматический запуск только для PR и push в main (теги обслуживает Release);
+#   - устаревший запуск отменяется при новом коммите в том же PR/ref;
+#   - один Linux-job: тесты + кросс-компиляция Windows EXE (проект — чистый Go stdlib,
+#     CGO не нужен) + артефакт oplata-windows-amd64;
+#   - дорогая сверка Excel через openpyxl — только если изменены Excel/модель/инструменты.
+# Нативная Windows-сборка сохранена в .github/workflows/release.yml.
 
 on:
   push:
+    branches:
+      - main
   pull_request:
   workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 permissions:
   contents: read
@@ -18,8 +28,8 @@ env:
   GO_VERSION: "1.25"
 
 jobs:
-  test:
-    name: Тесты ядра (Linux)
+  check:
+    name: Тесты и сборка oplata.exe (Linux)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -41,7 +51,37 @@ jobs:
         run: go vet ./...
       - name: go test
         run: go test ./...
+      - name: Определить, нужна ли сверка Excel через openpyxl
+        id: excel
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          base=""
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            base="$PR_BASE_SHA"
+          elif [ "$EVENT_NAME" = "push" ]; then
+            base="$PUSH_BEFORE_SHA"
+          fi
+
+          # Если базу определить нельзя (ручной запуск, первый коммит и т.п.) — проверяем.
+          needed=true
+          if [ -n "$base" ] && [ "$base" != "0000000000000000000000000000000000000000" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
+            files="$(git -c core.quotePath=false diff --name-only "$base...HEAD")"
+            echo "Изменённые файлы:"
+            echo "$files"
+            if printf '%s\n' "$files" | grep -Eq '^(pkg/(excelio|model)/|tools/(exportdemo/|verify_export\.py$)|\.github/workflows/ci\.yml$|go\.mod$|Оплаты Строймаркет\.xlsx$)'; then
+              needed=true
+            else
+              needed=false
+            fi
+          fi
+          echo "needed=$needed" >> "$GITHUB_OUTPUT"
+          echo "::notice title=verify-export::Сверка Excel через openpyxl нужна: $needed"
       - name: Экспорт XLSX открывается сторонним openpyxl и сверяется с оригиналом
+        if: steps.excel.outputs.needed == 'true'
         run: |
           # Вывод дублируем в аннотации: полные логи Actions не всегда доступны оператору.
           # set +e обязателен: шаги Actions запускаются с bash -e и оборвут вывод диагностики.
@@ -58,41 +98,17 @@ jobs:
           cat /tmp/verify.out
           if [ $code -ne 0 ]; then report_fail /tmp/verify.out; exit $code; fi
           echo "::notice title=verify-export::$(tail -1 /tmp/verify.out)"
-      - name: Кросс-компиляция Windows (проверка, что собирается)
-        run: |
-          VERSION="$(git describe --tags --always 2>/dev/null || echo dev)"
-          echo "Версия: $VERSION"
-          GOOS=windows GOARCH=amd64 go build -trimpath -o /tmp/oplata-check.exe ./cmd/oplata
-
-  build-windows:
-    name: Сборка oplata.exe (Windows)
-    needs: test
-    runs-on: windows-latest
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          fetch-depth: 0
-      - uses: actions/setup-go@v7
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: false
-      - name: Сборка oplata.exe
+      - name: Сборка oplata.exe (кросс-компиляция Windows)
         run: |
           VERSION="$(git describe --tags --always 2>/dev/null || echo dev)"
           echo "Версия: $VERSION"
           mkdir -p dist
-          go build -trimpath -ldflags "-s -w -H windowsgui -X main.version=$VERSION" -o dist/oplata.exe ./cmd/oplata
-          ls -lh dist/
-      - name: Проверка артефакта (PE-заголовок и размер)
-        run: |
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -H windowsgui -X main.version=$VERSION" -o dist/oplata.exe ./cmd/oplata
           test -s dist/oplata.exe
           head -c 2 dist/oplata.exe | grep -q MZ
+          ls -lh dist/
       - uses: actions/upload-artifact@v7
         with:
           name: oplata-windows-amd64
           path: dist/
           if-no-files-found: error
-

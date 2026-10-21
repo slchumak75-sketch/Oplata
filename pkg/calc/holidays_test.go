@@ -81,6 +81,18 @@ func TestNextWorkingDayAndPaymentDueDate(t *testing.T) {
 	if got := PaymentDueDate("2024-12-21", 14); got != "2025-01-08" {
 		t.Fatalf("PaymentDueDate=%s", got)
 	}
+	// Обратный расчёт для ручного ввода в «Таблице»: самая ранняя поставка,
+	// дающая перенесённый срок 08.01.2025 при отсрочке 14 дней, — 21.12.2024.
+	if got := DeliveryDateForDueDate("2025-01-08", 14); got != "2024-12-21" {
+		t.Fatalf("DeliveryDateForDueDate(перенесённый срок)=%s", got)
+	}
+	if got := DeliveryDateForDueDate("2025-01-15", 14); got != "2025-01-01" {
+		t.Fatalf("DeliveryDateForDueDate(обычный срок)=%s", got)
+	}
+	// Срок вручную оставлен на нерабочем дне: дата поставки = срок - отсрочка.
+	if got := DeliveryDateForDueDate("2025-01-04", 14); got != "2024-12-21" {
+		t.Fatalf("DeliveryDateForDueDate(нерабочий срок)=%s", got)
+	}
 }
 
 func TestMondayOf(t *testing.T) {

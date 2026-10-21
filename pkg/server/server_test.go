@@ -153,6 +153,41 @@ func TestDeliveryVATAndWorkingDueDate(t *testing.T) {
 	if code != 200 || len(ops) != 1 || ops[0].(map[string]any)["vat_cents"].(float64) != 2000 {
 		t.Fatalf("операции с НДС: код=%d ответ=%v", code, opsResp)
 	}
+	// Ручной ввод в ячейку «Таблицы» задаёт срок оплаты; сервер синхронизирует
+	// дату поставки по отсрочке поставщика с учётом переноса нерабочих дней.
+	code, manual := env.req(t, "POST", "/api/obligations",
+		`{"supplier_id":"s1","due_date":"2025-01-08","amount_cents":5000,"infer_delivery_date":true}`, true)
+	if code != http.StatusCreated || manual["delivery_date"] != "2024-12-21" {
+		t.Fatalf("ручной ввод с восстановлением поставки: код=%d ответ=%v", code, manual)
+	}
+	manualID, _ := manual["id"].(string)
+	// Та же запись видна в карточке поставщика с обеими датами.
+	code, card := env.req(t, "GET", "/api/suppliers/s1/card?date=2025-01-31", "", false)
+	cardObs, _ := card["obligations"].([]any)
+	foundManual := false
+	for _, raw := range cardObs {
+		state := raw.(map[string]any)
+		obligation := state["obligation"].(map[string]any)
+		if obligation["id"] == manualID {
+			foundManual = obligation["delivery_date"] == "2024-12-21" && obligation["due_date"] == "2025-01-08"
+		}
+	}
+	if code != 200 || !foundManual {
+		t.Fatalf("карточка после ручного ввода: код=%d ответ=%v", code, card)
+	}
+	// Без infer_delivery_date старое поведение сохраняется: дата поставки не выдумывается.
+	code, plain := env.req(t, "POST", "/api/obligations",
+		`{"supplier_id":"s1","due_date":"2025-01-15","amount_cents":6000}`, true)
+	if _, hasDelivery := plain["delivery_date"]; code != http.StatusCreated || hasDelivery {
+		t.Fatalf("обычное создание без infer: код=%d ответ=%v", code, plain)
+	}
+	// Прямое редактирование такой записи с infer заполняет недостающую дату поставки.
+	plainID, _ := plain["id"].(string)
+	code, updated := env.req(t, "PUT", "/api/obligations/"+plainID,
+		`{"supplier_id":"s1","due_date":"2025-01-15","amount_cents":6500,"infer_delivery_date":true}`, true)
+	if code != 200 || updated["delivery_date"] != "2025-01-01" {
+		t.Fatalf("обновление с infer: код=%d ответ=%v", code, updated)
+	}
 }
 
 func TestImportExportRoundTripViaAPI(t *testing.T) {
