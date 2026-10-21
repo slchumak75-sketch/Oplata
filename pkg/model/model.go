@@ -24,8 +24,10 @@ import (
 // При изменении формата: увеличить, добавить миграцию в pkg/store и запись в CHANGELOG.md.
 // v2: добавлены Supplier.UNP и справочник покупателей (Buyer).
 // v3: у начислений добавлена необязательная разбивка суммы поставки без НДС и НДС.
-// Файлы v1/v2 мигрируют в store.Decode (новые поля просто отсутствуют в старом JSON).
-const SchemaVersion = 3
+// v4: Supplier.UNP удалён по решению владельца (у покупателей УНП сохранён);
+// старое поле suppliers[].unp при загрузке игнорируется и в v4 не записывается.
+// Файлы v1–v3 мигрируют в store.Decode.
+const SchemaVersion = 4
 
 // Date — календарная дата в формате ISO yyyy-mm-dd. Сравнение строк == сравнение дат.
 type Date string
@@ -83,9 +85,6 @@ type Supplier struct {
 	ID string `json:"id"`
 	// Name — название, как в Excel (столбец A). Уникальность контролирует store с нормализацией.
 	Name string `json:"name"`
-	// UNP — учётный номер плательщика (9 символов). Необязательное поле карточки;
-	// в исходном Excel отсутствует, при импорте остаётся пустым.
-	UNP string `json:"unp"`
 	// DeferralDays — отсрочка платежа в днях по умолчанию для этого поставщика.
 	// 0 = не задана (срок оплаты вводится вручную).
 	DeferralDays int    `json:"deferral_days"`
@@ -247,7 +246,6 @@ func (db *DB) Validate() error {
 	}
 	ids := make(map[string]bool, len(db.Suppliers))
 	names := make(map[string]string, len(db.Suppliers))
-	supplierUNPs := make(map[string]string, len(db.Suppliers))
 	for _, s := range db.Suppliers {
 		if s.ID == "" {
 			return fmt.Errorf("поставщик %q: пустой id", s.Name)
@@ -261,15 +259,6 @@ func (db *DB) Validate() error {
 		}
 		if s.DeferralDays < 0 || s.DeferralDays > 3650 {
 			return fmt.Errorf("поставщик %q: отсрочка вне диапазона 0..3650: %d", s.Name, s.DeferralDays)
-		}
-		if err := ValidateUNP(s.UNP); err != nil {
-			return fmt.Errorf("поставщик %q: %w", s.Name, err)
-		}
-		if unp := NormalizeUNP(s.UNP); unp != "" {
-			if prev, ok := supplierUNPs[unp]; ok {
-				return fmt.Errorf("поставщики %q и %q: одинаковый УНП %s", prev, s.Name, unp)
-			}
-			supplierUNPs[unp] = s.Name
 		}
 		if prev, ok := names[NormalizeName(s.Name)]; ok {
 			return fmt.Errorf("поставщики %q и %q: одинаковые названия", prev, s.Name)

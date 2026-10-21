@@ -97,7 +97,9 @@ table.matrix thead tr.kinds th.dayoff{background:#f5f0e1}
 /* Начало недели (понедельник) — жирная левая граница */
 table.matrix th.week-start,table.matrix td.week-start{border-left:2px solid #94a3b8}
 table.matrix td.cell{cursor:pointer}
-table.matrix td.cell:hover{box-shadow:inset 0 0 0 2px #93c5fd}
+table.matrix td.cell:hover,table.matrix td.cell:focus{box-shadow:inset 0 0 0 2px #93c5fd}
+table.matrix td.cell.editing{padding:1px}
+table.matrix td.cell .cell-editor{width:100%;min-width:64px;box-sizing:border-box;border:1px solid var(--blue);border-radius:4px;padding:2px 4px;font:inherit;background:#fff}
 table.matrix th.today{background:#fde047}
 table.matrix td.vyplaty{color:var(--green)}
 table.matrix tr.total td{background:#fff;font-weight:700;border-top:2px solid #cbd5e1;border-bottom:2px solid #cbd5e1}
@@ -123,7 +125,6 @@ table.matrix tr.selected-supplier td.sticky-2{background:#fff}
 .delivery-supplier{font-size:16px;font-weight:750;margin-top:3px;overflow-wrap:anywhere}
 .delivery-form{display:grid;gap:10px}
 .delivery-form input{width:100%}
-.delivery-form .delivery-total{background:#fff;font-weight:800}
 .delivery-due{display:flex;flex-direction:column;gap:2px;background:#fff;border:1px solid var(--line);border-radius:8px;padding:8px 10px}
 .delivery-due span{color:var(--muted);font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.03em}
 .delivery-due strong{font-size:17px}

@@ -14,7 +14,7 @@ const state = {
   token: '', today: '', settings: {}, suppliers: null, buyers: null,
   dashboardDate: '', matrixAnchor: '', // понедельник отображаемой недели «Таблицы» (ISOString)
   matrixSupplierId: '', // поставщик, выбранный в «Таблице» для панели поставки
-  matrixDeliveryDraft: {supplier_id: '', date: '', amount_excl_vat: '', vat: ''},
+  matrixDeliveryDraft: {supplier_id: '', date: '', amount: ''},
   opsFilters: {supplier_id: '', kind: 'all', from: '', to: '', q: ''},
   includeArchived: false,
 };
@@ -290,31 +290,27 @@ function deliveryPanelHtml(supplier) {
   if (!supplier) {
     return '<h3>Поставка</h3>' +
       '<p class="muted">Нажмите наименование поставщика в таблице — здесь появится ввод поставки.</p>' +
-      '<p class="muted">Понадобятся дата поставки, сумма без НДС и сумма НДС. Срок оплаты программа ' +
+      '<p class="muted">Понадобятся дата поставки и одна сумма с НДС. Срок оплаты программа ' +
       'посчитает по отсрочке поставщика и перенесёт с выходного на ближайший рабочий день.</p>';
   }
   if (!state.matrixDeliveryDraft || state.matrixDeliveryDraft.supplier_id !== supplier.id) {
-    state.matrixDeliveryDraft = {supplier_id: supplier.id, date: state.today, amount_excl_vat: '', vat: ''};
+    state.matrixDeliveryDraft = {supplier_id: supplier.id, date: state.today, amount: ''};
   }
   const d = state.matrixDeliveryDraft;
   const cur = esc(state.settings.currency_label || '');
   return '<div class="delivery-head"><div><h3>Поставка</h3>' +
     '<div class="delivery-supplier">' + esc(supplier.name) + '</div>' +
-    '<div class="muted">Отсрочка: ' + (supplier.deferral_days ? supplier.deferral_days + ' дн.' : '0 дн.') +
-    (supplier.unp ? ' · УНП ' + esc(supplier.unp) : '') + '</div></div>' +
+    '<div class="muted">Отсрочка: ' + (supplier.deferral_days ? supplier.deferral_days + ' дн.' : '0 дн.') + '</div></div>' +
     '<a class="btn btn-small" href="#/supplier/' + encodeURIComponent(supplier.id) + '">Карточка</a></div>' +
     '<div class="form-error hidden" id="dError"></div>' +
     '<div class="delivery-form">' +
     '<label class="field">Дата поставки * <input type="date" id="dDeliveryDate" value="' + esc(d.date || state.today) + '"></label>' +
-    '<label class="field">Сумма без НДС * <input type="text" class="money" id="dAmountExclVat" inputmode="decimal" placeholder="0,00" value="' + esc(d.amount_excl_vat) + '"></label>' +
-    '<label class="field">НДС <input type="text" class="money" id="dVat" inputmode="decimal" placeholder="0,00" value="' + esc(d.vat) + '">' +
-    '<span class="hint">Сумма НДС в ' + cur + ', не ставка. Пусто = 0.</span></label>' +
-    '<label class="field">Сумма с НДС <input type="text" class="money delivery-total" id="dAmountWithVat" readonly tabindex="-1" placeholder="0,00">' +
-    '<span class="hint">Вычисляется: сумма без НДС + НДС. Эта сумма попадёт в «Приход».</span></label>' +
+    '<label class="field">Сумма с НДС * <input type="text" class="money" id="dAmount" inputmode="decimal" placeholder="0,00" value="' + esc(d.amount) + '">' +
+    '<span class="hint">Одна сумма уже с НДС в ' + cur + '; она попадёт в «Приход».</span></label>' +
     '<div class="delivery-due"><span>Срок оплаты</span><strong id="dDueDate">—</strong><small id="dDueNote"></small></div>' +
     '</div>' +
     '<div class="delivery-actions"><button class="btn" id="dClear" type="button">Очистить</button>' +
-    '<button class="btn btn-primary" id="dSave" type="button">Добавить в «Приход»</button></div>' +
+    '<button class="btn btn-primary" id="dSave" type="button">Приход</button></div>' +
     '<p class="muted delivery-note">Срок оплаты = дата поставки + отсрочка. Если дата выпадает на выходной ' +
     'или праздник РБ, программа сдвигает её на ближайший следующий рабочий день. После сохранения таблица ' +
     'сама перейдёт на неделю срока оплаты.</p>';
@@ -323,9 +319,7 @@ function bindDeliveryPanel(view, supplier) {
   const panel = $('#deliveryPanel', view);
   if (!panel || !supplier) return;
   const dateEl = $('#dDeliveryDate', panel);
-  const exclEl = $('#dAmountExclVat', panel);
-  const vatEl = $('#dVat', panel);
-  const totalEl = $('#dAmountWithVat', panel);
+  const amountEl = $('#dAmount', panel);
   const dueEl = $('#dDueDate', panel);
   const dueNoteEl = $('#dDueNote', panel);
   const errorEl = $('#dError', panel);
@@ -333,10 +327,6 @@ function bindDeliveryPanel(view, supplier) {
   const showError = (msg) => {
     errorEl.textContent = msg || '';
     errorEl.classList.toggle('hidden', !msg);
-  };
-  const readMoney = (input, blankAsZero) => {
-    if (!input.value.trim()) return blankAsZero ? 0 : null;
-    return parseMoneyToCents(input.value);
   };
   const updateDue = async () => {
     const seq = ++deliveryPreviewSeq;
@@ -365,37 +355,26 @@ function bindDeliveryPanel(view, supplier) {
     state.matrixDeliveryDraft = {
       supplier_id: supplier.id,
       date: dateEl.value,
-      amount_excl_vat: exclEl.value,
-      vat: vatEl.value,
+      amount: amountEl.value,
     };
-    const excl = readMoney(exclEl, false);
-    const vat = readMoney(vatEl, true);
-    totalEl.value = (excl === null || vat === null) ? '' : fmtMoney(excl + vat);
     if (refreshDue) updateDue();
   };
   dateEl.addEventListener('input', () => update(true));
   dateEl.addEventListener('change', () => update(true));
-  [exclEl, vatEl].forEach((input) => {
-    input.addEventListener('input', () => update(false));
-    input.addEventListener('change', () => update(false));
-  });
+  amountEl.addEventListener('input', () => update(false));
+  amountEl.addEventListener('change', () => update(false));
   $('#dClear', panel).onclick = () => {
-    exclEl.value = '';
-    vatEl.value = '';
+    amountEl.value = '';
     showError('');
     update();
-    exclEl.focus();
+    amountEl.focus();
   };
   saveBtn.onclick = async () => {
     showError('');
     const delivery = dateEl.value;
-    const excl = readMoney(exclEl, false);
-    const vat = readMoney(vatEl, true);
+    const total = parseMoneyToCents(amountEl.value);
     if (!delivery) { showError('Укажите дату поставки.'); dateEl.focus(); return; }
-    if (excl === null || excl < 0) { showError('Укажите неотрицательную сумму без НДС, например 1 200,00.'); exclEl.focus(); return; }
-    if (vat === null || vat < 0) { showError('Укажите неотрицательную сумму НДС или оставьте поле пустым.'); vatEl.focus(); return; }
-    const total = excl + vat;
-    if (total <= 0) { showError('Сумма с НДС должна быть больше нуля.'); exclEl.focus(); return; }
+    if (total === null || total <= 0) { showError('Укажите положительную сумму с НДС, например 1 200,00.'); amountEl.focus(); return; }
     saveBtn.disabled = true;
     try {
       // due_date намеренно не присылаем: сервер сам посчитает поставка + отсрочка
@@ -403,13 +382,10 @@ function bindDeliveryPanel(view, supplier) {
       const created = await api('/api/obligations', {method: 'POST', json: {
         supplier_id: supplier.id,
         amount_cents: total,
-        amount_excl_vat_cents: excl,
-        vat_cents: vat,
         delivery_date: delivery,
       }});
       await loadSuppliersCached();
-      state.matrixDeliveryDraft.amount_excl_vat = '';
-      state.matrixDeliveryDraft.vat = '';
+      state.matrixDeliveryDraft.amount = '';
       toast('Поставка добавлена в «Приход» на ' + fmtDate(created.due_date), 'ok');
       await renderMatrix(view, mondayOfISO(created.due_date));
     } catch (e) {
@@ -418,6 +394,168 @@ function bindDeliveryPanel(view, supplier) {
     }
   };
   update(true);
+}
+
+let matrixCellEditing = false;
+
+function matrixOperationPayload(op, cents) {
+  if (op.kind === 'obligation') {
+    // При прямом изменении суммы старая разбивка НДС больше не соответствует итогу,
+    // поэтому серверу она не передаётся и сбрасывается; остальные поля записи сохраняются.
+    return {
+      supplier_id: op.supplier_id,
+      amount_cents: cents,
+      due_date: op.date,
+      delivery_date: op.delivery_date || '',
+      doc_number: op.doc_number || '',
+      comment: op.comment || '',
+    };
+  }
+  return {
+    supplier_id: op.supplier_id,
+    amount_cents: cents,
+    date: op.date,
+    doc_number: op.doc_number || '',
+    comment: op.comment || '',
+  };
+}
+
+async function createMatrixCellOperation(supplierId, date, kind, cents) {
+  if (kind === 'obligation') {
+    await api('/api/obligations', {method: 'POST', json: {
+      supplier_id: supplierId, due_date: date, amount_cents: cents,
+    }});
+  } else {
+    await api('/api/payments', {method: 'POST', json: {
+      supplier_id: supplierId, date, amount_cents: cents,
+    }});
+  }
+}
+
+async function updateMatrixCellOperation(op, cents) {
+  const path = op.kind === 'obligation' ? '/api/obligations/' : '/api/payments/';
+  await api(path + encodeURIComponent(op.id), {method: 'PUT', json: matrixOperationPayload(op, cents)});
+}
+
+async function deleteMatrixCellOperation(op) {
+  const path = op.kind === 'obligation' ? '/api/obligations/' : '/api/payments/';
+  await api(path + encodeURIComponent(op.id), {method: 'DELETE'});
+}
+
+// Прямое редактирование работает с суммой ячейки. Одна запись изменяется/удаляется;
+// при нескольких записях увеличение добавляет разницу отдельной операцией, а уменьшение
+// сначала сокращает меньшие записи без разбивки НДС, чтобы не трогать остальные без нужды.
+async function saveMatrixCellValue(td, cents) {
+  const supplierId = td.dataset.cellSup;
+  const date = td.dataset.cellDate;
+  const kind = td.dataset.cellKind;
+  const data = await api('/api/operations?supplier_id=' + encodeURIComponent(supplierId) +
+    '&kind=' + encodeURIComponent(kind) + '&from=' + date + '&to=' + date + '&limit=500');
+  const ops = data.operations || [];
+  const oldTotal = ops.reduce((sum, op) => sum + (op.amount_cents || 0), 0);
+  if (cents === oldTotal) return false;
+
+  if (cents === 0) {
+    for (const op of ops) await deleteMatrixCellOperation(op);
+  } else if (ops.length === 0) {
+    await createMatrixCellOperation(supplierId, date, kind, cents);
+  } else if (ops.length === 1) {
+    await updateMatrixCellOperation(ops[0], cents);
+  } else if (cents > oldTotal) {
+    await createMatrixCellOperation(supplierId, date, kind, cents - oldTotal);
+  } else {
+    let reduction = oldTotal - cents;
+    let remainingTotal = oldTotal;
+    const hasBreakdown = (op) => (op.amount_excl_vat_cents || op.vat_cents) ? 1 : 0;
+    const candidates = ops.filter((op) => op.amount_cents > 0).slice().sort((a, b) =>
+      (hasBreakdown(a) - hasBreakdown(b)) || (a.amount_cents - b.amount_cents));
+    for (const op of candidates) {
+      if (reduction <= 0) break;
+      if (op.amount_cents > reduction) {
+        await updateMatrixCellOperation(op, op.amount_cents - reduction);
+        remainingTotal -= reduction;
+        reduction = 0;
+      } else {
+        await deleteMatrixCellOperation(op);
+        remainingTotal -= op.amount_cents;
+        reduction -= op.amount_cents;
+      }
+    }
+    if (remainingTotal !== cents) {
+      if (kind !== 'payment') throw new Error('Не удалось применить новую сумму ячейки.');
+      await createMatrixCellOperation(supplierId, date, kind, cents - remainingTotal);
+    }
+  }
+  await loadSuppliersCached();
+  return true;
+}
+
+function startMatrixCellEdit(view, anchor, td) {
+  if (matrixCellEditing) return;
+  matrixCellEditing = true;
+  const originalHtml = td.innerHTML;
+  const currentCents = parseInt(td.dataset.cellCents, 10) || 0;
+  const input = document.createElement('input');
+  input.type = 'text';
+  input.className = 'money cell-editor';
+  input.inputMode = 'decimal';
+  input.value = currentCents ? fmtMoney(currentCents).replace(/\u00A0/g, ' ') : '';
+  input.setAttribute('aria-label', td.dataset.cellKind === 'payment' ? 'Сумма оплаты' : 'Сумма прихода');
+  td.classList.add('editing');
+  td.innerHTML = '';
+  td.appendChild(input);
+  input.focus();
+  input.select();
+
+  let done = false;
+  const cancel = () => {
+    if (done) return;
+    done = true;
+    matrixCellEditing = false;
+    td.classList.remove('editing');
+    td.innerHTML = originalHtml;
+  };
+  const commit = async () => {
+    if (done) return;
+    done = true;
+    const raw = input.value.trim();
+    const cents = raw === '' ? 0 : parseMoneyToCents(raw);
+    if (cents === null || (td.dataset.cellKind === 'obligation' && cents < 0)) {
+      toast('Укажите сумму, например 1 200,00. Пустая ячейка очищает сумму.', 'error');
+      matrixCellEditing = false;
+      await renderMatrix(view, anchor);
+      return;
+    }
+    input.disabled = true;
+    try {
+      const changed = await saveMatrixCellValue(td, cents);
+      if (changed) toast(cents === 0 ? 'Ячейка очищена' : 'Сумма сохранена', 'ok');
+    } catch (e) {
+      toast(e.message, 'error');
+    } finally {
+      matrixCellEditing = false;
+      await renderMatrix(view, anchor);
+    }
+  };
+  input.addEventListener('click', (e) => e.stopPropagation());
+  input.addEventListener('keydown', (e) => {
+    e.stopPropagation();
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+  });
+  input.addEventListener('blur', () => commit());
+}
+
+function bindMatrixCellEditors(view, anchor) {
+  view.querySelectorAll('[data-cell-sup]').forEach((td) => {
+    td.onclick = () => startMatrixCellEdit(view, anchor, td);
+    td.onkeydown = (e) => {
+      if (e.target === td && (e.key === 'Enter' || e.key === ' ')) {
+        e.preventDefault();
+        startMatrixCellEdit(view, anchor, td);
+      }
+    };
+  });
 }
 
 async function renderMatrix(view, targetMonday) {
@@ -456,25 +594,27 @@ async function renderMatrix(view, targetMonday) {
   const totalCells = m.days.map((d, i) => {
     const t = m.day_totals[i];
     return '<td class="num' + dataDayCls(d, true) + '">' + fmtMoneyShort(t.sobstv_cents) + '</td>' +
-      '<td class="num vyplaty' + dataDayCls(d, false) + '">' + (t.vyplaty_cents ? '−' + fmtMoneyShort(t.vyplaty_cents) : '') + '</td>';
+      '<td class="num vyplaty' + dataDayCls(d, false) + '">' + (t.vyplaty_cents ? (t.vyplaty_cents > 0 ? '−' : '') + fmtMoneyShort(t.vyplaty_cents) : '') + '</td>';
   }).join('');
-  const bodyRows = m.rows.filter((r) => state.includeArchived || !r.supplier.archived).map((r) => {
+  const visibleRows = m.rows.filter((r) => state.includeArchived || !r.supplier.archived);
+  const matrixSuppliers = {};
+  visibleRows.forEach((r) => { matrixSuppliers[r.supplier.id] = r.supplier; });
+  const selectedSupplier = matrixSuppliers[state.matrixSupplierId] ||
+    (visibleRows.length ? visibleRows[0].supplier : null);
+  state.matrixSupplierId = selectedSupplier ? selectedSupplier.id : '';
+  const bodyRows = visibleRows.map((r) => {
     const byDate = {};
     for (const c of r.cells) byDate[c.date] = c;
     const cells = m.days.map((d) => {
       const c = byDate[d.date] || {sobstv_cents: 0, vyplaty_cents: 0};
       const attr = ' data-cell-sup="' + esc(r.supplier.id) + '" data-cell-date="' + d.date + '"';
-      return '<td class="cell num' + dataDayCls(d, true) + '"' + attr + '>' + fmtMoneyShort(c.sobstv_cents) + '</td>' +
-        '<td class="cell num vyplaty' + dataDayCls(d, false) + '"' + attr + '>' + (c.vyplaty_cents ? '−' + fmtMoneyShort(c.vyplaty_cents) : '') + '</td>';
+      return '<td class="cell num' + dataDayCls(d, true) + '"' + attr + ' data-cell-kind="obligation" data-cell-cents="' + c.sobstv_cents + '" tabindex="0">' + fmtMoneyShort(c.sobstv_cents) + '</td>' +
+        '<td class="cell num vyplaty' + dataDayCls(d, false) + '"' + attr + ' data-cell-kind="payment" data-cell-cents="' + c.vyplaty_cents + '" tabindex="0">' + (c.vyplaty_cents ? (c.vyplaty_cents > 0 ? '−' : '') + fmtMoneyShort(c.vyplaty_cents) : '') + '</td>';
     }).join('');
     return '<tr' + (r.supplier.id === state.matrixSupplierId ? ' class="selected-supplier"' : '') + '>' +
       '<td class="sticky-1"><button type="button" class="supplier-link" data-delivery-sup="' + esc(r.supplier.id) + '" title="Ввести поставку поставщика">' + esc(r.supplier.name) + '</button></td>' +
       '<td class="sticky-2 num' + (r.range_balance_cents < 0 ? ' neg' : '') + '" title="Задолженность за всё время: ' + esc(fmtMoney(r.balance_cents)) + '">' + fmtMoneyShort(r.range_balance_cents) + '</td>' + cells + '</tr>';
   }).join('');
-  const matrixSuppliers = {};
-  m.rows.forEach((r) => { matrixSuppliers[r.supplier.id] = r.supplier; });
-  const selectedSupplier = matrixSuppliers[state.matrixSupplierId] || supplierById(state.matrixSupplierId);
-
   view.innerHTML =
     '<div class="toolbar matrix-toolbar">' +
     '<button class="btn" id="weekBack" title="Предыдущая неделя">← Неделя</button>' +
@@ -484,7 +624,7 @@ async function renderMatrix(view, targetMonday) {
     '<label class="muted">Дата <input type="date" id="gotoDate" value="' + esc(anchor) + '"></label>' +
     '<button class="btn" id="gotoBtn">Перейти</button>' +
     '<span class="spacer"></span><span class="muted">Задолженность за неделю: <strong>' + fmtMoney(m.grand_range_cents) +
-    ' ' + esc(state.settings.currency_label || '') + '</strong> · поставщик — ввод поставки · ячейка — операции дня</span></div>' +
+    ' ' + esc(state.settings.currency_label || '') + '</strong> · поставщик — поставка справа · ячейка — изменить сумму</span></div>' +
     '<div class="matrix-layout"><div class="matrix-main">' +
     '<div class="matrix-wrap week" id="matrixWrap"><table class="matrix week"><thead>' +
     '<tr class="months">' + monthHeaders + '</tr>' +
@@ -497,12 +637,11 @@ async function renderMatrix(view, targetMonday) {
     'перескакивают сразу на 7 дней. В шапке дат <span class="legend-dayoff"></span> — выходные и праздничные дни по законодательству РБ ' +
     '(с учётом переносов рабочих дней), наведите курсор на дату — покажется название праздника. Жёлтым в шапке отмечен сегодняшний день; поля с суммами не закрашиваются. ' +
     'Дата вверху — срок оплаты с учётом отсрочки; «Приход» — к оплате, «Оплата» показана с минусом. ' +
+    'Клик по ячейке редактирует сумму прямо в таблице: Enter — сохранить, Esc — отмена, пустое значение — очистить. ' +
     'Если за день было несколько операций — в ячейке их сумма.</p></div>' +
-    '<aside class="delivery-panel' + (selectedSupplier ? '' : ' hidden') + '" id="deliveryPanel">' + deliveryPanelHtml(selectedSupplier) + '</aside></div>';
+    '<aside class="delivery-panel" id="deliveryPanel">' + deliveryPanelHtml(selectedSupplier) + '</aside></div>';
 
-  view.querySelectorAll('[data-cell-sup]').forEach((td) => {
-    td.onclick = () => dayOperationsModal(td.dataset.cellSup, td.dataset.cellDate);
-  });
+  bindMatrixCellEditors(view, anchor);
 
   bindDeliveryPanel(view, selectedSupplier);
   view.querySelectorAll('[data-delivery-sup]').forEach((btn) => {
@@ -514,10 +653,9 @@ async function renderMatrix(view, targetMonday) {
       const row = btn.closest('tr');
       if (row) row.classList.add('selected-supplier');
       const panel = $('#deliveryPanel', view);
-      panel.classList.remove('hidden');
       panel.innerHTML = deliveryPanelHtml(supplier);
       bindDeliveryPanel(view, supplier);
-      const first = $('#dAmountExclVat', panel);
+      const first = $('#dAmount', panel);
       if (first) first.focus();
     };
   });
@@ -529,24 +667,6 @@ async function renderMatrix(view, targetMonday) {
   $('#gotoBtn').onclick = () => { const v = $('#gotoDate').value; if (v) renderMatrix(view, mondayOfISO(v)); };
 }
 
-async function dayOperationsModal(supplierId, date) {
-  const sup = supplierById(supplierId);
-  const data = await api('/api/operations?supplier_id=' + encodeURIComponent(supplierId) +
-    '&from=' + date + '&to=' + date + '&limit=200');
-  const rows = data.operations.map((o) => operationRowHtml(o)).join('');
-  const modal = openModal('<h3>' + esc(sup ? sup.name : '') + ' — ' + fmtDate(date) + '</h3>' +
-    (data.operations.length
-      ? '<div class="table-wrap"><table class="data"><tbody>' + rows + '</tbody></table></div>'
-      : '<p class="muted">Операций за этот день нет.</p>') +
-    '<div class="modal-actions"><button class="btn" id="dayClose">Закрыть</button>' +
-    '<button class="btn btn-primary" id="dayAddObl">＋ Приход (срок ' + fmtDate(date) + ')</button>' +
-    '<button class="btn btn-success" id="dayAddPay">＋ Оплата</button></div>', true);
-  $('#dayClose', modal).onclick = () => { closeModal(); };
-  $('#dayAddObl', modal).onclick = () => obligationForm({supplierId, dueDate: date});
-  $('#dayAddPay', modal).onclick = () => paymentForm({supplierId, date});
-  bindOperationRowActions(modal, () => dayOperationsModal(supplierId, date));
-}
-
 /* ---------- Поставщики ---------- */
 async function renderSuppliers(view) {
   view.innerHTML = '<div class="loading">Загрузка поставщиков…</div>';
@@ -555,7 +675,6 @@ async function renderSuppliers(view) {
     .filter((s) => state.includeArchived || !s.supplier.archived)
     .map((s) => '<tr><td><a href="#/supplier/' + encodeURIComponent(s.supplier.id) + '">' + esc(s.supplier.name) + '</a>' +
       (s.supplier.archived ? ' <span class="badge pending">архив</span>' : '') + '</td>' +
-      '<td>' + esc(s.supplier.unp || '—') + '</td>' +
       '<td class="num">' + fmtMoney(s.balance_cents) + '</td>' +
       '<td class="num' + (s.overdue_cents > 0 ? ' overdue' : '') + '">' + (s.overdue_cents ? fmtMoney(s.overdue_cents) : '—') + '</td>' +
       '<td class="center">' + (s.supplier.deferral_days ? s.supplier.deferral_days + ' дн.' : '—') + '</td>' +
@@ -565,7 +684,7 @@ async function renderSuppliers(view) {
     '<button class="btn" id="btnSupplierCardList">🏭 Карточка поставщика</button>' +
     '<label><input type="checkbox" id="chkArchived2"' + (state.includeArchived ? ' checked' : '') + '> показывать архивных</label></div>' +
     '<div class="panel"><h3>Поставщики (' + state.suppliers.length + ')</h3><div class="table-wrap"><table class="data">' +
-    '<thead><tr><th>Наименование поставщика</th><th>УНП</th><th class="num">Задолженность</th><th class="num">Просрочено</th><th>Отсрочка</th><th>Примечание</th></tr></thead>' +
+    '<thead><tr><th>Наименование поставщика</th><th class="num">Задолженность</th><th class="num">Просрочено</th><th>Отсрочка</th><th>Примечание</th></tr></thead>' +
     '<tbody>' + rows + '</tbody></table></div></div>';
   $('#btnNewSupplier').onclick = () => supplierForm(null);
   $('#btnSupplierCardList').onclick = () => supplierCardModal();
@@ -651,8 +770,7 @@ async function renderSupplierCard(view, supplierId) {
     '<div><div class="k">Задолженность</div><div class="v">' + fmtMoney(c.balance_cents) + ' ' + esc(state.settings.currency_label || '') + '</div></div>' +
     '<div><div class="k">Просрочено</div><div class="v" style="color:var(--red)">' + fmtMoney(c.overdue_cents) + '</div></div>' +
     '<div><div class="k">Переплата</div><div class="v">' + fmtMoney(c.overpaid_cents) + '</div></div>' +
-    '<div><div class="k">Отсрочка</div><div class="v">' + (sup.deferral_days ? sup.deferral_days + ' дн.' : 'не задана') + '</div></div>' +
-    '<div><div class="k">УНП</div><div class="v">' + esc(sup.unp || 'не указан') + '</div></div></div>' +
+    '<div><div class="k">Отсрочка</div><div class="v">' + (sup.deferral_days ? sup.deferral_days + ' дн.' : 'не задана') + '</div></div></div>' +
     (sup.note ? '<p class="muted">' + esc(sup.note) + '</p>' : '') +
     balanceChartSVG(c.running) + '</div>' +
     '<div class="panel"><h3>Приход — погашение по FIFO от раннего срока</h3><div class="table-wrap"><table class="data">' +
@@ -664,43 +782,14 @@ async function renderSupplierCard(view, supplierId) {
 }
 
 /* ---------- Операции (журнал) ---------- */
-function operationRowHtml(o, showActions = true) {
+function operationRowHtml(o) {
   const kind = o.kind === 'obligation'
     ? '<span class="badge partial">Приход</span>' : '<span class="badge paid">Оплата</span>';
   const vatDetails = (o.kind === 'obligation' && (o.amount_excl_vat_cents || o.vat_cents))
     ? '<div class="muted">без НДС: ' + fmtMoney(o.amount_excl_vat_cents || 0) + '; НДС: ' + fmtMoney(o.vat_cents || 0) + '</div>'
     : '';
-  const actions = showActions
-    ? '<td class="nowrap"><button class="btn btn-small" data-edit-op="' + o.kind + '" data-id="' + esc(o.id) + '">Изм.</button> ' +
-      '<button class="btn btn-small" data-del-op="' + o.kind + '" data-id="' + esc(o.id) + '">Удал.</button></td>'
-    : '';
   return '<tr><td>' + kind + '</td><td>' + esc(o.supplier_name) + '</td><td class="nowrap">' + fmtDate(o.date) + '</td>' +
-    '<td class="num">' + fmtMoney(o.amount_cents) + '</td><td>' + esc(o.doc_number || '') + '</td><td>' + esc(o.comment || '') + vatDetails + '</td>' +
-    actions + '</tr>';
-}
-function bindOperationRowActions(root, refresh) {
-  root.querySelectorAll('[data-edit-op]').forEach((b) => {
-    b.onclick = async () => {
-      const kind = b.dataset.editOp, id = b.dataset.id;
-      const data = await api('/api/operations?limit=5000');
-      const op = data.operations.find((o) => o.id === id && o.kind === kind);
-      if (!op) { toast('Операция не найдена', 'error'); return; }
-      if (kind === 'obligation') obligationForm({existing: op, refresh});
-      else paymentForm({existing: op, refresh});
-    };
-  });
-  root.querySelectorAll('[data-del-op]').forEach((b) => {
-    b.onclick = async () => {
-      if (!await confirmDialog('Удаление операции', 'Операция будет удалена без возможности восстановления (страховка — резервные копии в папке данных).')) return;
-      const path = b.dataset.delOp === 'obligation' ? '/api/obligations/' : '/api/payments/';
-      try {
-        await api(path + encodeURIComponent(b.dataset.id), {method: 'DELETE'});
-        toast('Операция удалена', 'ok');
-        await loadSuppliersCached();
-        if (refresh) refresh(); else route();
-      } catch (e) { toast(e.message, 'error'); }
-    };
-  });
+    '<td class="num">' + fmtMoney(o.amount_cents) + '</td><td>' + esc(o.doc_number || '') + '</td><td>' + esc(o.comment || '') + vatDetails + '</td></tr>';
 }
 async function renderOperations(view) {
   await loadSuppliersCached();
@@ -713,7 +802,7 @@ async function renderOperations(view) {
   if (f.q) params.set('q', f.q);
   view.innerHTML = '<div class="loading">Загрузка операций…</div>';
   const data = await api('/api/operations?' + params.toString());
-  const rows = data.operations.map((o) => operationRowHtml(o, false)).join('');
+  const rows = data.operations.map((o) => operationRowHtml(o)).join('');
   view.innerHTML =
     '<div class="toolbar">' +
     '<select id="fSupplier">' + supplierOptions(f.supplier_id, true) + '</select>' +
@@ -728,7 +817,7 @@ async function renderOperations(view) {
     '<div class="panel"><h3>Журнал операций</h3><div class="table-wrap"><table class="data">' +
     '<thead><tr><th>Тип</th><th>Поставщик</th><th>Дата</th><th class="num">Сумма</th><th>Документ</th><th>Комментарий</th></tr></thead>' +
     '<tbody>' + (rows || '<tr><td colspan="6" class="muted">Ничего не найдено.</td></tr>') + '</tbody></table></div>' +
-    '<p class="muted">Дата прихода — срок оплаты (с учётом отсрочки). Новые операции добавляются на вкладке «Таблица»: приход — через панель поставки, приход и оплата — в окне операций дня.</p></div>';
+    '<p class="muted">Дата прихода — срок оплаты (с учётом отсрочки). Суммы добавляются и изменяются прямо в ячейках вкладки «Таблица»; поставка — через постоянную панель справа.</p></div>';
   const apply = () => {
     state.opsFilters = {
       supplier_id: $('#fSupplier').value, kind: $('#fKind').value,
@@ -852,10 +941,9 @@ async function afterMutation(refresh) {
   if (refresh) refresh(); else route();
 }
 function supplierForm(existing, refresh) {
-  const s = existing || {name: '', unp: '', deferral_days: 0, note: '', archived: false};
+  const s = existing || {name: '', deferral_days: 0, note: '', archived: false};
   const modal = openModal('<h3>' + (existing ? 'Карточка поставщика: ' + esc(s.name) : 'Новый поставщик') + '</h3><div class="form-grid">' +
     '<label class="field full">Наименование поставщика * <input type="text" id="supName" value="' + esc(s.name) + '"></label>' +
-    '<label class="field">УНП <input type="text" id="supUnp" value="' + esc(s.unp || '') + '" placeholder="9 символов"><span class="hint">Учётный номер плательщика, необязательно.</span></label>' +
     '<label class="field">Отсрочка платежа, дней <input type="number" id="supDeferral" min="0" max="3650" value="' + (s.deferral_days || 0) + '">' +
     '<span class="hint">Срок оплаты будет предлагаться как дата поставки + отсрочка. 0 — вводить срок вручную.</span></label>' +
     '<label class="field">Примечание <input type="text" id="supNote" value="' + esc(s.note || '') + '"></label>' +
@@ -867,7 +955,6 @@ function supplierForm(existing, refresh) {
   $('#supSave', modal).onclick = async () => {
     const payload = {
       name: $('#supName', modal).value.trim(),
-      unp: $('#supUnp', modal).value.trim(),
       deferral_days: parseInt($('#supDeferral', modal).value, 10) || 0,
       note: $('#supNote', modal).value.trim(),
       archived: existing ? $('#supArchived', modal).checked : false,
@@ -935,7 +1022,7 @@ function buyerForm(existing, refresh) {
 }
 
 // supplierCardModal — окно «Карточка поставщика» из синей шапки:
-// выбор поставщика, наименование/УНП/отсрочка, кнопки Добавить/Удалить/Сохранить.
+// выбор поставщика, наименование/отсрочка, кнопки Добавить/Удалить/Сохранить.
 async function supplierCardModal() {
   if (!state.suppliers) await loadSuppliersCached();
   const list = state.suppliers || [];
@@ -943,7 +1030,6 @@ async function supplierCardModal() {
   const modal = openModal('<h3>🏭 Карточка поставщика</h3><div class="form-grid">' +
     '<label class="field full">Поставщик <select id="scSelect">' + supplierOptions(first ? first.id : '', false) + '</select></label>' +
     '<label class="field full">Наименование поставщика * <input type="text" id="scName"></label>' +
-    '<label class="field">УНП <input type="text" id="scUnp" placeholder="9 символов"></label>' +
     '<label class="field">Отсрочка платежа, дней <input type="number" id="scDeferral" min="0" max="3650">' +
     '<span class="hint">Срок оплаты = дата поставки + отсрочка. 0 — срок вручную.</span></label>' +
     '<label class="field full">Примечание <input type="text" id="scNote"></label>' +
@@ -958,7 +1044,6 @@ async function supplierCardModal() {
     const sup = supplierById($('#scSelect', modal).value);
     const has = !!sup;
     $('#scName', modal).value = has ? sup.name : '';
-    $('#scUnp', modal).value = has ? (sup.unp || '') : '';
     $('#scDeferral', modal).value = has ? (sup.deferral_days || 0) : 0;
     $('#scNote', modal).value = has ? (sup.note || '') : '';
     $('#scArchived', modal).checked = has ? !!sup.archived : false;
@@ -980,7 +1065,6 @@ async function supplierCardModal() {
     const id = $('#scSelect', modal).value;
     const payload = {
       name: $('#scName', modal).value.trim(),
-      unp: $('#scUnp', modal).value.trim(),
       deferral_days: parseInt($('#scDeferral', modal).value, 10) || 0,
       note: $('#scNote', modal).value.trim(),
       archived: $('#scArchived', modal).checked,
@@ -1066,76 +1150,6 @@ async function buyerCardModal() {
       route();
     } catch (e) { toast(e.message, 'error'); }
   };
-}
-
-function obligationForm(opts) {
-  opts = opts || {};
-  const ex = opts.existing; // operationView при редактировании
-  const init = {
-    supplierId: ex ? ex.supplier_id : (opts.supplierId || (state.suppliers && state.suppliers[0] ? state.suppliers[0].supplier.id : '')),
-    amount: ex ? fmtMoney(ex.amount_cents).replace(/\u00A0/g, ' ') : '',
-    due: ex ? ex.date : (opts.dueDate || ''),
-    delivery: ex ? (ex.delivery_date || '') : '',
-    doc: ex ? (ex.doc_number || '') : '',
-    comment: ex ? (ex.comment || '') : '',
-  };
-  const sup0 = supplierById(init.supplierId);
-  const modal = openModal('<h3>' + (ex ? 'Редактирование: приход' : 'Новый приход') + '</h3><div class="form-grid">' +
-    '<label class="field full">Поставщик * <select id="oSupplier">' + supplierOptions(init.supplierId, false) + '</select></label>' +
-    '<label class="field">Сумма к оплате * <input type="text" class="money" id="oAmount" inputmode="decimal" placeholder="0,00" value="' + esc(init.amount) + '"></label>' +
-    '<label class="field">№ накладной / счёта <input type="text" id="oDoc" value="' + esc(init.doc) + '"></label>' +
-    '<label class="field">Дата поставки <input type="date" id="oDelivery" value="' + esc(init.delivery) + '"><span class="hint">Необязательно.</span></label>' +
-    '<label class="field">Отсрочка, дней <input type="number" id="oDeferral" min="0" max="3650" value="' + (sup0 ? sup0.deferral_days || 0 : 0) + '"></label>' +
-    '<label class="field">Срок оплаты * <input type="date" id="oDue" value="' + esc(init.due) + '"><span class="hint">Считается: поставка + отсрочка; выходной/праздник РБ автоматически сдвигается на следующий рабочий день. Можно исправить вручную.</span></label>' +
-    '<label class="field">Комментарий <input type="text" id="oComment" value="' + esc(init.comment) + '"></label>' +
-    '</div><div class="modal-actions"><button class="btn" id="oCancel">Отмена</button><button class="btn btn-primary" id="oSave">Сохранить</button></div>');
-  const recalcDue = async () => {
-    const delivery = $('#oDelivery', modal).value;
-    const deferral = parseInt($('#oDeferral', modal).value, 10) || 0;
-    if (!delivery) return;
-    const rawDue = addDaysISO(delivery, deferral);
-    $('#oDue', modal).value = rawDue;
-    try {
-      const p = await fetchWorkingDue(rawDue);
-      if ($('#oDelivery', modal).value === delivery &&
-          (parseInt($('#oDeferral', modal).value, 10) || 0) === deferral) {
-        $('#oDue', modal).value = p.dueDate;
-      }
-    } catch (e) { /* сервер всё равно применит перенос при пустом due_date; здесь остаётся сырая дата */ }
-  };
-  $('#oSupplier', modal).onchange = (e) => {
-    const sup = supplierById(e.target.value);
-    if (sup) $('#oDeferral', modal).value = sup.deferral_days || 0;
-    recalcDue();
-  };
-  $('#oDelivery', modal).onchange = recalcDue;
-  $('#oDeferral', modal).onchange = recalcDue;
-  $('#oCancel', modal).onclick = closeModal;
-  $('#oSave', modal).onclick = async () => {
-    const cents = parseMoneyToCents($('#oAmount', modal).value);
-    if (cents === null || cents <= 0) { formError(modal, 'Укажите положительную сумму, например 1 013,49.'); return; }
-    const payload = {
-      supplier_id: $('#oSupplier', modal).value, amount_cents: cents,
-      due_date: $('#oDue', modal).value, delivery_date: $('#oDelivery', modal).value,
-      deferral_days: parseInt($('#oDeferral', modal).value, 10) || 0,
-      doc_number: $('#oDoc', modal).value.trim(), comment: $('#oComment', modal).value.trim(),
-    };
-    // Если запись была создана панелью поставки и итог не меняли — сохранить разбивку НДС.
-    if (ex && (ex.amount_excl_vat_cents || ex.vat_cents) &&
-        cents === (ex.amount_excl_vat_cents || 0) + (ex.vat_cents || 0)) {
-      payload.amount_excl_vat_cents = ex.amount_excl_vat_cents || 0;
-      payload.vat_cents = ex.vat_cents || 0;
-    }
-    if (!payload.supplier_id) { formError(modal, 'Сначала создайте поставщика.'); return; }
-    if (!payload.due_date && !payload.delivery_date) { formError(modal, 'Укажите срок оплаты или дату поставки.'); return; }
-    try {
-      if (ex) await api('/api/obligations/' + encodeURIComponent(ex.id), {method: 'PUT', json: payload});
-      else await api('/api/obligations', {method: 'POST', json: payload});
-      toast('Приход сохранён', 'ok');
-      await afterMutation(opts.refresh);
-    } catch (e) { formError(modal, e.message); }
-  };
-  $('#oAmount', modal).focus();
 }
 
 function paymentForm(opts) {

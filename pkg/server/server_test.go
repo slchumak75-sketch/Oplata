@@ -199,16 +199,15 @@ func TestImportExportRoundTripViaAPI(t *testing.T) {
 	}
 }
 
-func TestBuyersAndSupplierUNP(t *testing.T) {
+func TestBuyersAndSupplierWithoutUNP(t *testing.T) {
 	env := newTestEnv(t)
-	// Поставщик с УНП: сохраняется в каноническом виде.
+	// У поставщиков УНП больше нет: старое поле запроса игнорируется и в ответ не попадает.
 	code, out := env.req(t, "POST", "/api/suppliers", `{"name":"МАВ","unp":" 123 456 789 ","deferral_days":30}`, true)
-	if code != http.StatusCreated || out["unp"] != "123456789" {
-		t.Fatalf("поставщик с УНП: код=%d ответ=%v", code, out)
+	if _, hasUNP := out["unp"]; code != http.StatusCreated || hasUNP {
+		t.Fatalf("поставщик без УНП: код=%d ответ=%v", code, out)
 	}
-	// Дубликат УНП у другого поставщика — ошибка.
-	if code, _ := env.req(t, "POST", "/api/suppliers", `{"name":"Другой","unp":"123456789"}`, true); code != http.StatusBadRequest {
-		t.Fatalf("дубликат УНП поставщика: код %d", code)
+	if code, _ := env.req(t, "POST", "/api/suppliers", `{"name":"Другой","unp":"123456789"}`, true); code != http.StatusCreated {
+		t.Fatalf("второй поставщик с игнорируемым старым unp: код %d", code)
 	}
 	// Покупатели: создать, найти поиском, изменить, удалить.
 	code, buy := env.req(t, "POST", "/api/buyers", `{"name":"СтройДом","unp":"987654321","note":"опт"}`, true)

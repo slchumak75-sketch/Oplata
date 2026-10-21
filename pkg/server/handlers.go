@@ -41,7 +41,6 @@ func (s *Server) handleSuppliersList(w http.ResponseWriter, r *http.Request) {
 
 type supplierRequest struct {
 	Name         string `json:"name"`
-	UNP          string `json:"unp"`
 	DeferralDays int    `json:"deferral_days"`
 	Note         string `json:"note"`
 	Archived     bool   `json:"archived"`
@@ -58,7 +57,6 @@ func (s *Server) handleSupplierCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	created := model.Supplier{ID: model.NewID("sup"), Name: strings.TrimSpace(req.Name),
-		UNP:          model.NormalizeUNP(req.UNP),
 		DeferralDays: req.DeferralDays, Note: req.Note, Archived: req.Archived}
 	err := s.Store.Update(func(db *model.DB) error {
 		db.Suppliers = append(db.Suppliers, created)
@@ -88,7 +86,6 @@ func (s *Server) handleSupplierUpdate(w http.ResponseWriter, r *http.Request) {
 			return fmt.Errorf("укажите название поставщика")
 		}
 		sup.Name = strings.TrimSpace(req.Name)
-		sup.UNP = model.NormalizeUNP(req.UNP)
 		sup.DeferralDays = req.DeferralDays
 		sup.Note = req.Note
 		sup.Archived = req.Archived
@@ -673,18 +670,6 @@ func (s *Server) handleImport(w http.ResponseWriter, r *http.Request) {
 		imported.Settings.SeededFrom = ""
 		// В Excel покупателей нет — справочник при замене поставщиков/операций сохраняем.
 		imported.Buyers = current.Buyers
-		// УНП поставщиков в Excel тоже нет — переносим по совпадению наименования, чтобы не терять карточки.
-		unpByName := make(map[string]string, len(current.Suppliers))
-		for _, sup := range current.Suppliers {
-			if sup.UNP != "" {
-				unpByName[model.NormalizeName(sup.Name)] = sup.UNP
-			}
-		}
-		for i := range imported.Suppliers {
-			if unp, ok := unpByName[model.NormalizeName(imported.Suppliers[i].Name)]; ok {
-				imported.Suppliers[i].UNP = unp
-			}
-		}
 		imported.Warnings = report.Warnings
 		err = s.Store.ReplaceAll(imported)
 	case "merge":
