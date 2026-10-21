@@ -327,6 +327,10 @@ type obligationRequest struct {
 	AmountExclVATCents *int64 `json:"amount_excl_vat_cents"`
 	VATCents           *int64 `json:"vat_cents"`
 	DeliveryDate       string `json:"delivery_date"`
+	// InferDeliveryDate: ручной ввод из ячейки «Таблицы» задаёт срок оплаты без
+	// даты поставки; сервер восстанавливает её по отсрочке (calc.DeliveryDateForDueDate),
+	// чтобы карточка поставщика и экспорт показывали ту же пару дат, что панель поставки.
+	InferDeliveryDate bool `json:"infer_delivery_date"`
 	// DeferralDays: если DueDate пуст, а DeliveryDate задан, срок = поставка + отсрочка.
 	// nil -> отсрочка поставщика. Фронтенд обычно считает сам и присылает готовый DueDate.
 	DeferralDays *int   `json:"deferral_days"`
@@ -383,6 +387,13 @@ func resolveObligation(db *model.DB, req obligationRequest) (model.Obligation, e
 		due = calc.PaymentDueDate(delivery, deferral)
 	} else {
 		return model.Obligation{}, fmt.Errorf("укажите срок оплаты (due_date) или дату поставки (delivery_date)")
+	}
+	if delivery == "" && req.InferDeliveryDate {
+		deferral := sup.DeferralDays
+		if req.DeferralDays != nil {
+			deferral = *req.DeferralDays
+		}
+		delivery = calc.DeliveryDateForDueDate(due, deferral)
 	}
 	return model.Obligation{
 		SupplierID: req.SupplierID, DueDate: due, AmountCents: req.AmountCents,

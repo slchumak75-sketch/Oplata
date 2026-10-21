@@ -407,6 +407,7 @@ function matrixOperationPayload(op, cents) {
       amount_cents: cents,
       due_date: op.date,
       delivery_date: op.delivery_date || '',
+      infer_delivery_date: !op.delivery_date,
       doc_number: op.doc_number || '',
       comment: op.comment || '',
     };
@@ -423,7 +424,7 @@ function matrixOperationPayload(op, cents) {
 async function createMatrixCellOperation(supplierId, date, kind, cents) {
   if (kind === 'obligation') {
     await api('/api/obligations', {method: 'POST', json: {
-      supplier_id: supplierId, due_date: date, amount_cents: cents,
+      supplier_id: supplierId, due_date: date, amount_cents: cents, infer_delivery_date: true,
     }});
   } else {
     await api('/api/payments', {method: 'POST', json: {
@@ -449,6 +450,7 @@ async function saveMatrixCellValue(td, cents) {
   const supplierId = td.dataset.cellSup;
   const date = td.dataset.cellDate;
   const kind = td.dataset.cellKind;
+  state.matrixSupplierId = supplierId; // правая панель и выделенная строка синхронизируются с ячейкой
   const data = await api('/api/operations?supplier_id=' + encodeURIComponent(supplierId) +
     '&kind=' + encodeURIComponent(kind) + '&from=' + date + '&to=' + date + '&limit=500');
   const ops = data.operations || [];
@@ -636,7 +638,8 @@ async function renderMatrix(view, targetMonday) {
     '<p class="muted">Показана одна неделя — с понедельника по воскресенье. Кнопки «← Неделя» и «Неделя →» ' +
     'перескакивают сразу на 7 дней. В шапке дат <span class="legend-dayoff"></span> — выходные и праздничные дни по законодательству РБ ' +
     '(с учётом переносов рабочих дней), наведите курсор на дату — покажется название праздника. Жёлтым в шапке отмечен сегодняшний день; поля с суммами не закрашиваются. ' +
-    'Дата вверху — срок оплаты с учётом отсрочки; «Приход» — к оплате, «Оплата» показана с минусом. ' +
+    'Дата вверху — срок оплаты с учётом отсрочки; для нового прихода из ячейки дата поставки в карточке рассчитывается от срока по отсрочке. ' +
+    '«Приход» — к оплате, «Оплата» показана с минусом. ' +
     'Клик по ячейке редактирует сумму прямо в таблице: Enter — сохранить, Esc — отмена, пустое значение — очистить. ' +
     'Если за день было несколько операций — в ячейке их сумма.</p></div>' +
     '<aside class="delivery-panel" id="deliveryPanel">' + deliveryPanelHtml(selectedSupplier) + '</aside></div>';

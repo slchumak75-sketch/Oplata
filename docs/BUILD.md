@@ -4,7 +4,7 @@
 
 ```
 go.mod / pkg/... / cmd/oplata      Корневой (и единственный) модуль: ТОЛЬКО стандартная библиотека Go (go.sum не нужен!)
-.github/workflows/ci.yml           Тесты + сборка oplata.exe при каждом push/PR (артефакты)
+.github/workflows/ci.yml           Быстрые тесты + кросс-сборка oplata.exe на PR/main (артефакты)
 .github/workflows/release.yml      Релиз при пуше тега v*: oplata.exe + zip + SHA256SUMS.txt
 tools/exportdemo + verify_export.py CI-проверка прямого импорта исходного Excel и последующего экспорта
 ```
@@ -23,11 +23,14 @@ tools/exportdemo + verify_export.py CI-проверка прямого импо�
 
 ## Автоматическая сборка на GitHub Actions
 
-- **CI** (`push`, `pull_request`, ручной запуск):
-  `test` (ubuntu: gofmt-проверка `cmd`+`pkg`, `go vet`, `go test`, пробная кросс-компиляция,
-  проверка экспорта Excel через openpyxl) → `build-windows` (windows-latest: `oplata.exe`
-  с `-H windowsgui`, проверка PE-заголовка, артефакт **oplata-windows-amd64**).
-- **Release** (`push` тега `v*`):
+- **CI** (автоматически: `pull_request` и `push` только в `main`; для рабочей ветки без PR —
+  ручной `workflow_dispatch`): один job на ubuntu — gofmt `cmd`+`pkg`, `go vet`, `go test`,
+  при изменениях Excel/модели/инструментов проверка экспорта через openpyxl, затем
+  кросс-компиляция `oplata.exe` для Windows с `-H windowsgui`, проверка PE-заголовка и
+  артефакт **oplata-windows-amd64**. Устаревшие запуски того же PR/ref отменяются
+  (`concurrency.cancel-in-progress`), теги CI не обслуживает.
+- **Release** (`push` тега `v*`): Linux-тесты и нативная Windows-сборка идут параллельно;
+  упаковка ZIP/SHA256 и публикация — на ubuntu после успеха обоих job.
   ```sh
   git tag v0.1.0 && git push origin v0.1.0
   ```
@@ -65,7 +68,7 @@ GOOS=windows GOARCH=amd64 go build -trimpath -ldflags "-s -w -X main.version=dev
 вкладку «Данные». Не возвращать `pkg/store/seed.json`, `//go:embed` seed или генератор
 seed без прямого решения владельца.
 
-Ту же сверку импорта/экспорта, что выполняет CI, можно запустить локально:
+Ту же сверку импорта/экспорта, что CI выполняет при релевантных изменениях, можно запустить локально:
 
 ```sh
 go run ./tools/exportdemo /tmp/oplata-2025.xlsx "Оплаты Строймаркет.xlsx"
