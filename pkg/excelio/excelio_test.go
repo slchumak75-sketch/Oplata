@@ -3,6 +3,7 @@ package excelio
 import (
 	"archive/zip"
 	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/slchumak75-sketch/oplata/pkg/calc"
@@ -18,7 +19,7 @@ func testDB() *model.DB {
 	db.Obligations = []model.Obligation{
 		{ID: "o1", SupplierID: "s1", DueDate: "2025-01-03", AmountCents: 101349, DocNumber: "ТН-1", Comment: "комментарий & <xml>"},
 		{ID: "o2", SupplierID: "s1", DueDate: "2025-01-03", AmountCents: 100}, // тот же день — в матрице суммируется
-		{ID: "o3", SupplierID: "s2", DueDate: "2025-06-30", AmountCents: 5000},
+		{ID: "o3", SupplierID: "s2", DueDate: "2025-06-30", AmountCents: 5000, DeliveryDate: "2025-06-16", AmountExclVATCents: 4000, VATCents: 1000},
 		{ID: "o4", SupplierID: "s2", DueDate: "2024-12-31", AmountCents: 700}, // другой год — не попадает в матрицу 2025
 	}
 	db.Payments = []model.Payment{
@@ -51,6 +52,15 @@ func TestRoundTrip(t *testing.T) {
 	}
 	if bal := calc.Balance(got.Obligations, got.Payments); bal != wantSobstv-101349 {
 		t.Fatalf("баланс импортированной базы: %d", bal)
+	}
+}
+
+func TestOperationsSheetVATBreakdown(t *testing.T) {
+	sheet := buildOperationsSheet(testDB())
+	for _, want := range []string{"Сумма без НДС", "НДС", "<v>40.00</v>", "<v>10.00</v>"} {
+		if !strings.Contains(sheet, want) {
+			t.Fatalf("в листе «Операции» нет %q", want)
+		}
 	}
 }
 

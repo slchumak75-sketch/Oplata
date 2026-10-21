@@ -124,6 +124,37 @@ func TestTokenGuardAndCRUD(t *testing.T) {
 	}
 }
 
+func TestDeliveryVATAndWorkingDueDate(t *testing.T) {
+	env := newTestEnv(t) // у s1 отсрочка 14 дней
+	// Панель поставки: 100,00 без НДС + 20,00 НДС. Поставка 21.12.2024 + 14 дней
+	// = суббота 04.01.2025, поэтому срок сдвигается на среду 08.01.2025
+	// (05.01 вс, 06.01 переведённый выходной, 07.01 православное Рождество).
+	code, out := env.req(t, "POST", "/api/obligations",
+		`{"supplier_id":"s1","delivery_date":"2024-12-21","amount_excl_vat_cents":10000,"vat_cents":2000}`, true)
+	if code != http.StatusCreated || out["due_date"] != "2025-01-08" || out["amount_cents"].(float64) != 12000 {
+		t.Fatalf("поставка с НДС: код=%d ответ=%v", code, out)
+	}
+	if out["amount_excl_vat_cents"].(float64) != 10000 || out["vat_cents"].(float64) != 2000 {
+		t.Fatalf("разбивка НДС не сохранилась: %v", out)
+	}
+	// Сумма с НДС обязана равняться сумме без НДС + НДС.
+	if code, _ := env.req(t, "POST", "/api/obligations",
+		`{"supplier_id":"s1","delivery_date":"2025-01-02","amount_cents":11900,"amount_excl_vat_cents":10000,"vat_cents":2000}`, true); code != http.StatusBadRequest {
+		t.Fatalf("несходящаяся разбивка НДС: код %d", code)
+	}
+	// Одна сумма разбивки без второй не принимается.
+	if code, _ := env.req(t, "POST", "/api/obligations",
+		`{"supplier_id":"s1","delivery_date":"2025-01-02","amount_cents":10000,"amount_excl_vat_cents":10000}`, true); code != http.StatusBadRequest {
+		t.Fatalf("неполная разбивка НДС: код %d", code)
+	}
+	// Журнал операций отдаёт разбивку для отображения и редактирования в GUI.
+	code, opsResp := env.req(t, "GET", "/api/operations?supplier_id=s1&kind=obligation", "", false)
+	ops, _ := opsResp["operations"].([]any)
+	if code != 200 || len(ops) != 1 || ops[0].(map[string]any)["vat_cents"].(float64) != 2000 {
+		t.Fatalf("операции с НДС: код=%d ответ=%v", code, opsResp)
+	}
+}
+
 func TestImportExportRoundTripViaAPI(t *testing.T) {
 	env := newTestEnv(t)
 	// Собираем книгу напрямую через excelio из тестовой базы и импортируем через API.

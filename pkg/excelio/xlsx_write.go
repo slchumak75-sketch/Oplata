@@ -236,14 +236,14 @@ func buildOperationsSheet(db *model.DB) string {
 	type op struct {
 		kind, supplier, doc, comment string
 		date, delivery               model.Date
-		cents                        int64
+		cents, exclVAT, vat          int64
 	}
 	ops := make([]op, 0, len(db.Obligations)+len(db.Payments))
 	for _, o := range db.Obligations {
-		ops = append(ops, op{"Собств (к оплате)", names[o.SupplierID], o.DocNumber, o.Comment, o.DueDate, o.DeliveryDate, o.AmountCents})
+		ops = append(ops, op{"Собств (к оплате)", names[o.SupplierID], o.DocNumber, o.Comment, o.DueDate, o.DeliveryDate, o.AmountCents, o.AmountExclVATCents, o.VATCents})
 	}
 	for _, p := range db.Payments {
-		ops = append(ops, op{"Выплата", names[p.SupplierID], p.DocNumber, p.Comment, p.Date, "", p.AmountCents})
+		ops = append(ops, op{"Выплата", names[p.SupplierID], p.DocNumber, p.Comment, p.Date, "", p.AmountCents, 0, 0})
 	}
 	slices.SortFunc(ops, func(a, b op) int {
 		if a.date != b.date {
@@ -258,8 +258,8 @@ func buildOperationsSheet(db *model.DB) string {
 	b.WriteString(xmlHeader)
 	b.WriteString(`<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main">`)
 	b.WriteString(`<sheetViews><sheetView workbookViewId="0"><pane ySplit="1" topLeftCell="A2" activePane="bottomLeft" state="frozen"/></sheetView></sheetViews>`)
-	b.WriteString(`<cols><col min="1" max="1" width="18" customWidth="1"/><col min="2" max="2" width="28" customWidth="1"/><col min="3" max="3" width="13" customWidth="1"/><col min="4" max="4" width="13" customWidth="1"/><col min="5" max="5" width="13" customWidth="1"/><col min="6" max="6" width="16" customWidth="1"/><col min="7" max="7" width="40" customWidth="1"/></cols><sheetData>`)
-	headers := []string{"Тип", "Поставщик", "Дата*", "Сумма", "Дата поставки", "№ документа", "Комментарий"}
+	b.WriteString(`<cols><col min="1" max="1" width="18" customWidth="1"/><col min="2" max="2" width="28" customWidth="1"/><col min="3" max="3" width="13" customWidth="1"/><col min="4" max="4" width="13" customWidth="1"/><col min="5" max="5" width="13" customWidth="1"/><col min="6" max="6" width="16" customWidth="1"/><col min="7" max="7" width="40" customWidth="1"/><col min="8" max="8" width="16" customWidth="1"/><col min="9" max="9" width="16" customWidth="1"/></cols><sheetData>`)
+	headers := []string{"Тип", "Поставщик", "Дата*", "Сумма", "Дата поставки", "№ документа", "Комментарий", "Сумма без НДС", "НДС"}
 	b.WriteString(`<row r="1">`)
 	for i, h := range headers {
 		b.WriteString(strCell(fmt.Sprintf("%s1", colNumToLetters(i+1)), styleHeader, h))
@@ -279,6 +279,10 @@ func buildOperationsSheet(db *model.DB) string {
 		b.WriteString(strCell(fmt.Sprintf("E%d", row), styleText, delivery))
 		b.WriteString(strCell(fmt.Sprintf("F%d", row), styleText, o.doc))
 		b.WriteString(strCell(fmt.Sprintf("G%d", row), styleText, o.comment))
+		if o.exclVAT != 0 || o.vat != 0 {
+			b.WriteString(numCell(fmt.Sprintf("H%d", row), styleMoney, model.CentsToDecimal(o.exclVAT)))
+			b.WriteString(numCell(fmt.Sprintf("I%d", row), styleMoney, model.CentsToDecimal(o.vat)))
+		}
 		b.WriteString(`</row>`)
 	}
 	b.WriteString(`</sheetData></worksheet>`)

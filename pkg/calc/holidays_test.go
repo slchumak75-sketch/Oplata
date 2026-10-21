@@ -64,6 +64,25 @@ func TestDayOffInfoBelarus(t *testing.T) {
 	}
 }
 
+func TestNextWorkingDayAndPaymentDueDate(t *testing.T) {
+	cases := []struct{ in, want model.Date }{
+		{"2025-01-08", "2025-01-08"}, // обычный рабочий день не сдвигается
+		{"2025-01-04", "2025-01-08"}, // сб → вс → переведённый пн → Рождество → ср
+		{"2025-01-11", "2025-01-11"}, // рабочая суббота остаётся сроком оплаты
+		{"2025-04-28", "2025-04-30"}, // переведённый понедельник → Радуница → среда
+		{"2025-12-25", "2025-12-29"}, // католическое Рождество → перенос → выходные → пн
+	}
+	for _, tc := range cases {
+		if got := NextWorkingDay(tc.in); got != tc.want {
+			t.Errorf("NextWorkingDay(%s)=%s, ожидалось %s", tc.in, got, tc.want)
+		}
+	}
+	// Поставка 21.12.2024 + 14 дней = суббота 04.01.2025; срок — 08.01.2025.
+	if got := PaymentDueDate("2024-12-21", 14); got != "2025-01-08" {
+		t.Fatalf("PaymentDueDate=%s", got)
+	}
+}
+
 func TestMondayOf(t *testing.T) {
 	// 2026-10-21 — среда; понедельник той же недели — 19 октября.
 	if got := MondayOf("2026-10-21"); got != "2026-10-19" {

@@ -67,6 +67,33 @@ func TestUNPAndBuyers(t *testing.T) {
 	}
 }
 
+func TestValidateObligationVATBreakdown(t *testing.T) {
+	db := NewEmptyDB()
+	db.Suppliers = []Supplier{{ID: "s1", Name: "АВИДО"}}
+	db.Obligations = []Obligation{{
+		ID: "o1", SupplierID: "s1", DueDate: "2025-01-15", DeliveryDate: "2025-01-01",
+		AmountCents: 12000, AmountExclVATCents: 10000, VATCents: 2000,
+	}}
+	if err := db.Validate(); err != nil {
+		t.Fatalf("корректная разбивка НДС отклонена: %v", err)
+	}
+	db.Obligations[0].VATCents = 1900
+	if err := db.Validate(); err == nil {
+		t.Fatal("сумма с НДС, не равная сумме без НДС + НДС, должна отвергаться")
+	}
+	db.Obligations[0].AmountExclVATCents = 12100
+	db.Obligations[0].VATCents = -100
+	if err := db.Validate(); err == nil {
+		t.Fatal("отрицательный НДС должен отвергаться")
+	}
+	// Без разбивки (импорт из Excel) обязательство по-прежнему валидно.
+	db.Obligations[0].AmountExclVATCents = 0
+	db.Obligations[0].VATCents = 0
+	if err := db.Validate(); err != nil {
+		t.Fatalf("обязательство без разбивки НДС отклонено: %v", err)
+	}
+}
+
 func TestValidate(t *testing.T) {
 	db := NewEmptyDB()
 	db.Suppliers = []Supplier{{ID: "s1", Name: "АВИДО"}}

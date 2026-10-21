@@ -27,7 +27,7 @@ const MaxBackups = 20
 // скриптом tools/excel2seed.py. Загружаются ТОЛЬКО при первом запуске,
 // когда файла данных ещё нет (и не задан флаг -no-seed / WithNoSeed).
 // Чтобы собрать exe без чужих данных: заменить файл seed.json на пустую базу
-// ({"version":2,...} с пустыми списками) и пересобрать — см. docs/BUILD.md.
+// ({"version":3,...} с пустыми списками) и пересобрать — см. docs/BUILD.md.
 //
 //go:embed seed.json
 var SeedJSON []byte
@@ -95,14 +95,15 @@ func Open(path string, useSeed bool) (*Store, error) {
 
 // Decode разбирает и валидирует JSON базы. Пустые срезы нормализуются в [] (не null в API).
 // Здесь же живут миграции формата: v1 -> v2 добавляет пустой справочник покупателей
-// и пустой УНП у поставщиков (поля просто отсутствуют в старом JSON).
+// и пустой УНП у поставщиков; v2 -> v3 добавляет необязательную разбивку начислений
+// по НДС (все новые поля просто отсутствуют в старом JSON).
 func Decode(data []byte) (*model.DB, error) {
 	var db model.DB
 	if err := json.Unmarshal(data, &db); err != nil {
 		return nil, err
 	}
-	if db.Version == 1 {
-		db.Version = 2
+	if db.Version == 1 || db.Version == 2 {
+		db.Version = model.SchemaVersion
 	}
 	if db.Suppliers == nil {
 		db.Suppliers = []model.Supplier{}

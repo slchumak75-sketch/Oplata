@@ -121,7 +121,7 @@ def main() -> int:
         per_supplier_balance[name] = balance
 
     data = OrderedDict([
-        ("version", 2),  # схема v2: у поставщиков есть unp, есть справочник покупателей
+        ("version", 3),  # схема v3: v2 (unp/buyers) + необязательная разбивка начислений по НДС
         ("settings", OrderedDict([
             ("company_name", "Строймаркет"),
             ("currency_label", "руб."),

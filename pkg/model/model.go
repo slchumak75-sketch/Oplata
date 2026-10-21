@@ -22,8 +22,10 @@ import (
 
 // SchemaVersion — версия формата файла данных (поле DB.Version).
 // При изменении формата: увеличить, добавить миграцию в pkg/store и запись в CHANGELOG.md.
-// v2: добавлены Supplier.UNP и справочник покупателей (Buyer). Файлы v1 мигрируют в store.Decode.
-const SchemaVersion = 2
+// v2: добавлены Supplier.UNP и справочник покупателей (Buyer).
+// v3: у начислений добавлена необязательная разбивка суммы поставки без НДС и НДС.
+// Файлы v1/v2 мигрируют в store.Decode (новые поля просто отсутствуют в старом JSON).
+const SchemaVersion = 3
 
 // Date — календарная дата в формате ISO yyyy-mm-dd. Сравнение строк == сравнение дат.
 type Date string
@@ -109,8 +111,14 @@ type Obligation struct {
 	SupplierID string `json:"supplier_id"`
 	// DueDate — срок оплаты с учётом отсрочки (главная дата записи, дата колонки Excel).
 	DueDate Date `json:"due_date"`
-	// AmountCents — сумма к оплате в копейках, всегда > 0.
+	// AmountCents — сумма к оплате в копейках, всегда > 0. Для поставки с разбивкой НДС
+	// это сумма С НДС: AmountExclVATCents + VATCents.
 	AmountCents int64 `json:"amount_cents"`
+	// AmountExclVATCents и VATCents — необязательная разбивка поставки (схема v3):
+	// сумма без НДС и сумма НДС в копейках. Оба нуля означают «разбивки нет»
+	// (например, начисление импортировано из Excel, где хранится только итог).
+	AmountExclVATCents int64 `json:"amount_excl_vat_cents,omitempty"`
+	VATCents           int64 `json:"vat_cents,omitempty"`
 	// DeliveryDate — необязательная дата поставки. Если задана вместе с отсрочкой,
 	// интерфейс предлагает DueDate = DeliveryDate + отсрочка, но хранится именно DueDate.
 	DeliveryDate Date   `json:"delivery_date,omitempty"`
@@ -305,6 +313,14 @@ func (db *DB) Validate() error {
 		}
 		if o.AmountCents <= 0 {
 			return fmt.Errorf("начисление %s: сумма должна быть положительной: %d", o.ID, o.AmountCents)
+		}
+		if o.AmountExclVATCents != 0 || o.VATCents != 0 {
+			if o.AmountExclVATCents < 0 || o.VATCents < 0 {
+				return fmt.Errorf("начисление %s: сумма без НДС и НДС не могут быть отрицательными", o.ID)
+			}
+			if o.AmountExclVATCents+o.VATCents != o.AmountCents {
+				return fmt.Errorf("начисление %s: сумма с НДС должна равняться сумме без НДС + НДС", o.ID)
+			}
 		}
 		if o.DeliveryDate != "" && !o.DeliveryDate.Valid() {
 			return fmt.Errorf("начисление %s: некорректная дата поставки %q", o.ID, o.DeliveryDate)
