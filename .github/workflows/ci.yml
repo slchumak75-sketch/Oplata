@@ -98,13 +98,20 @@ jobs:
         run: |
           # go.sum в репозитории может отсутствовать (см. AGENTS.md): генерируем на месте.
           go mod tidy
-          go build ./... || true
-      - name: gofmt + vet (desktop)
+          # Диагностика окружения сборки Wails в аннотациях (логи не всегда под рукой).
+          echo "::notice title=desktop env::go=$(go version) CGO_ENABLED=$(go env CGO_ENABLED) CC=$(go env CC) gcc=$(command -v gcc || echo MISSING)"
+      - name: gofmt (desktop)
         working-directory: desktop
         run: |
           files=$(gofmt -l .)
-          if [ -n "$files" ]; then echo "Не отформатированы: $files"; exit 1; fi
-          go vet ./...
+          if [ -n "$files" ]; then
+            echo "::error title=gofmt desktop::Не отформатированы: $files"
+            gofmt -d . | head -100 | sed 's/^/::notice title=gofmt diff::/' || true
+            exit 1
+          fi
+      - name: go vet (desktop)
+        working-directory: desktop
+        run: go vet ./...
       - name: Сборка oplata-desktop.exe
         working-directory: desktop
         run: |
