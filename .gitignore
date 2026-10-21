@@ -1,0 +1,27 @@
+# Сборки и артефакты
+*.exe
+*.dll
+dist/
+build/bin/
+desktop/build/bin/
+
+# Данные программы (никогда не должны попадать в git)
+data.json
+oplata-data.json
+oplata.log
+backups/
+*.tmp
+
+# Служебное редакторов/ОС
+.idea/
+.vscode/
+Thumbs.db
+.DS_Store
+
+# Питон для tools/
+__pycache__/
+.venv/
+
+# Wails
+desktop/frontend/dist/
+node_modules/
