@@ -42,7 +42,7 @@ func TestSeedReconciliation(t *testing.T) {
 	}
 }
 
-// TestDecodeMigratesV1: файл формата v1 (без buyers и unp) открывается как v2.
+// TestDecodeMigratesV1: файл формата v1 (без buyers и unp) открывается как v3.
 func TestDecodeMigratesV1(t *testing.T) {
 	v1 := []byte(`{"version":1,"settings":{"company_name":"Тест","currency_label":"руб.","warn_days":3},
 		"suppliers":[{"id":"s1","name":"АВИДО","deferral_days":0,"note":"","archived":false}],
@@ -51,8 +51,22 @@ func TestDecodeMigratesV1(t *testing.T) {
 	if err != nil {
 		t.Fatalf("миграция v1: %v", err)
 	}
-	if db.Version != 2 || db.Buyers == nil || len(db.Buyers) != 0 || db.Suppliers[0].UNP != "" {
+	if db.Version != 3 || db.Buyers == nil || len(db.Buyers) != 0 || db.Suppliers[0].UNP != "" {
 		t.Fatalf("после миграции: %+v", db)
+	}
+}
+
+func TestDecodeMigratesV2(t *testing.T) {
+	v2 := []byte(`{"version":2,"settings":{"company_name":"Тест","currency_label":"руб.","warn_days":3},
+		"suppliers":[{"id":"s1","name":"АВИДО","unp":"123456789","deferral_days":14,"note":"","archived":false}],
+		"obligations":[{"id":"o1","supplier_id":"s1","due_date":"2025-01-15","amount_cents":12000,"delivery_date":"2025-01-01","doc_number":"","comment":""}],
+		"payments":[],"buyers":[],"warnings":[]}`)
+	db, err := Decode(v2)
+	if err != nil {
+		t.Fatalf("миграция v2: %v", err)
+	}
+	if db.Version != 3 || db.Obligations[0].AmountExclVATCents != 0 || db.Obligations[0].VATCents != 0 {
+		t.Fatalf("после миграции v2: %+v", db)
 	}
 }
 

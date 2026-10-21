@@ -116,6 +116,26 @@ func DayOffInfo(date model.Date) (dayOff bool, name string) {
 	return false, ""
 }
 
+// NextWorkingDay возвращает саму дату, если она рабочая, иначе ближайший
+// следующий рабочий день по календарю РБ (выходные, праздники и переносы).
+// Используется для срока оплаты поставки: дата поставки + отсрочка не должна
+// оставаться на нерабочем дне.
+func NextWorkingDay(date model.Date) model.Date {
+	for {
+		dayOff, _ := DayOffInfo(date)
+		if !dayOff {
+			return date
+		}
+		date = date.AddDays(1)
+	}
+}
+
+// PaymentDueDate считает срок оплаты поставки: дата поставки + отсрочка в днях,
+// а затем перенос вперёд на ближайший рабочий день, если результат нерабочий.
+func PaymentDueDate(delivery model.Date, deferralDays int) model.Date {
+	return NextWorkingDay(delivery.AddDays(deferralDays))
+}
+
 // WeekdayMon1 возвращает день недели: 1 = понедельник … 7 = воскресенье.
 func WeekdayMon1(date model.Date) int {
 	// time.Weekday: 0 = воскресенье … 6 = суббота.

@@ -13,6 +13,8 @@ const STATUS_RU = {paid: 'Оплачено', partial: 'Частично', overdu
 const state = {
   token: '', today: '', settings: {}, suppliers: null, buyers: null,
   dashboardDate: '', matrixAnchor: '', // понедельник отображаемой недели «Таблицы» (ISOString)
+  matrixSupplierId: '', // поставщик, выбранный в «Таблице» для панели поставки
+  matrixDeliveryDraft: {supplier_id: '', date: '', amount_excl_vat: '', vat: ''},
   opsFilters: {supplier_id: '', kind: 'all', from: '', to: '', q: ''},
   includeArchived: false,
 };
@@ -254,19 +256,16 @@ function bindRowButtons(root) {
   root.querySelectorAll('[data-pay-open]').forEach((b) => { b.onclick = () => paymentForm({supplierId: b.dataset.payOpen, amountCents: parseInt(b.dataset.amount, 10)}); });
 }
 
-/* ---------- Таблица: недели (понедельник–воскресенье), месяц над датами ---------- */
+/* ---------- Таблица: одна неделя (понедельник–воскресенье) и панель поставки ---------- */
 /*
- * Вкладка показывает диапазон целых недель вокруг «якоря» (state.matrixAnchor —
- * понедельник отображаемой недели). Один запрос /api/matrix?from&to грузит
- * MATRIX_WEEKS недель (с запасом назад), горизонтальная прокрутка внутри диапазона
- * «прилипает» к границам недель (скачки кратно неделе). Кнопки «‹‹ Раньше»/«Позже ››»
- * сдвигают якорь на 8 недель и перечитывают данные. Столбцы нерабочих дней РБ
- * (выходные + госпраздники с учётом переносов) сервер помечает is_day_off — бежевый фон.
+ * По требованию владельца вкладка показывает ровно 7 дней одной недели вокруг
+ * state.matrixAnchor (понедельник). Кнопки влево/вправо сразу перескакивают на
+ * предыдущую/следующую неделю и перечитывают /api/matrix только за эти 7 дней.
+ * Верхняя полоса над датами — месяц и год. Справа — панель поставки выбранного
+ * поставщика. Столбцы нерабочих дней РБ сервер помечает is_day_off (бежевый фон).
  */
 const WEEKDAYS_SHORT = ['', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс'];
-const MATRIX_WEEKS = 12;      // сколько недель в одном запросе
-const MATRIX_BACK_WEEKS = 2;  // запас недель слева от якоря
-const MATRIX_SHIFT_DAYS = 56; // шаг кнопок «‹‹ Раньше»/«Позже ››» (8 недель)
+let deliveryPreviewSeq = 0; // защита от гонок при предпросмотре срока оплаты
 
 function isoToUTC(iso) { const p = iso.split('-'); return Date.UTC(+p[0], +p[1] - 1, +p[2]); }
 function utcToISO(ms) { return new Date(ms).toISOString().slice(0, 10); }
@@ -276,22 +275,171 @@ function mondayOfISO(iso) {
   return addDaysISO(iso, -wd);
 }
 function capitalizeMonth(name) { return name ? name.charAt(0).toUpperCase() + name.slice(1) : ''; }
+async function fetchWorkingDue(rawDue) {
+  if (!rawDue) return null;
+  // Календарь РБ уже приходит в /api/matrix (is_day_off): берём первый рабочий день.
+  const cal = await api('/api/matrix?from=' + rawDue + '&to=' + addDaysISO(rawDue, 21));
+  const rawDay = cal.days[0] || {};
+  const work = cal.days.find((d) => !d.is_day_off);
+  return {
+    rawDue,
+    dueDate: work ? work.date : rawDue,
+    adjusted: !!work && work.date !== rawDue,
+    reason: rawDay.holiday_name || '',
+  };
+}
+
+function deliveryPanelHtml(supplier) {
+  if (!supplier) {
+    return '<h3>Поставка</h3>' +
+      '<p class="muted">Нажмите наименование поставщика в таблице — здесь появится ввод поставки.</p>' +
+      '<p class="muted">Понадобятся дата поставки, сумма без НДС и сумма НДС. Срок оплаты программа ' +
+      'посчитает по отсрочке поставщика и перенесёт с выходного на ближайший рабочий день.</p>';
+  }
+  if (!state.matrixDeliveryDraft || state.matrixDeliveryDraft.supplier_id !== supplier.id) {
+    state.matrixDeliveryDraft = {supplier_id: supplier.id, date: state.today, amount_excl_vat: '', vat: ''};
+  }
+  const d = state.matrixDeliveryDraft;
+  const cur = esc(state.settings.currency_label || '');
+  return '<div class="delivery-head"><div><h3>Поставка</h3>' +
+    '<div class="delivery-supplier">' + esc(supplier.name) + '</div>' +
+    '<div class="muted">Отсрочка: ' + (supplier.deferral_days ? supplier.deferral_days + ' дн.' : '0 дн.') +
+    (supplier.unp ? ' · УНП ' + esc(supplier.unp) : '') + '</div></div>' +
+    '<a class="btn btn-small" href="#/supplier/' + encodeURIComponent(supplier.id) + '">Карточка</a></div>' +
+    '<div class="form-error hidden" id="dError"></div>' +
+    '<div class="delivery-form">' +
+    '<label class="field">Дата поставки * <input type="date" id="dDeliveryDate" value="' + esc(d.date || state.today) + '"></label>' +
+    '<label class="field">Сумма без НДС * <input type="text" class="money" id="dAmountExclVat" inputmode="decimal" placeholder="0,00" value="' + esc(d.amount_excl_vat) + '"></label>' +
+    '<label class="field">НДС <input type="text" class="money" id="dVat" inputmode="decimal" placeholder="0,00" value="' + esc(d.vat) + '">' +
+    '<span class="hint">Сумма НДС в ' + cur + ', не ставка. Пусто = 0.</span></label>' +
+    '<label class="field">Сумма с НДС <input type="text" class="money delivery-total" id="dAmountWithVat" readonly tabindex="-1" placeholder="0,00">' +
+    '<span class="hint">Вычисляется: сумма без НДС + НДС. Эта сумма попадёт в «Собств».</span></label>' +
+    '<div class="delivery-due"><span>Срок оплаты</span><strong id="dDueDate">—</strong><small id="dDueNote"></small></div>' +
+    '</div>' +
+    '<div class="delivery-actions"><button class="btn" id="dClear" type="button">Очистить</button>' +
+    '<button class="btn btn-primary" id="dSave" type="button">Добавить в «Собств»</button></div>' +
+    '<p class="muted delivery-note">Срок оплаты = дата поставки + отсрочка. Если дата выпадает на выходной ' +
+    'или праздник РБ, программа сдвигает её на ближайший следующий рабочий день. После сохранения таблица ' +
+    'сама перейдёт на неделю срока оплаты.</p>';
+}
+function bindDeliveryPanel(view, supplier) {
+  const panel = $('#deliveryPanel', view);
+  if (!panel || !supplier) return;
+  const dateEl = $('#dDeliveryDate', panel);
+  const exclEl = $('#dAmountExclVat', panel);
+  const vatEl = $('#dVat', panel);
+  const totalEl = $('#dAmountWithVat', panel);
+  const dueEl = $('#dDueDate', panel);
+  const dueNoteEl = $('#dDueNote', panel);
+  const errorEl = $('#dError', panel);
+  const saveBtn = $('#dSave', panel);
+  const showError = (msg) => {
+    errorEl.textContent = msg || '';
+    errorEl.classList.toggle('hidden', !msg);
+  };
+  const readMoney = (input, blankAsZero) => {
+    if (!input.value.trim()) return blankAsZero ? 0 : null;
+    return parseMoneyToCents(input.value);
+  };
+  const updateDue = async () => {
+    const seq = ++deliveryPreviewSeq;
+    const delivery = dateEl.value;
+    if (!delivery) {
+      dueEl.textContent = '—';
+      dueNoteEl.textContent = 'Укажите дату поставки.';
+      return;
+    }
+    const rawDue = addDaysISO(delivery, supplier.deferral_days || 0);
+    dueEl.textContent = fmtDate(rawDue);
+    dueNoteEl.textContent = 'Проверка рабочего календаря РБ…';
+    try {
+      const p = await fetchWorkingDue(rawDue);
+      if (seq !== deliveryPreviewSeq || !document.body.contains(panel)) return;
+      dueEl.textContent = fmtDate(p.dueDate);
+      dueNoteEl.textContent = p.adjusted
+        ? 'Перенесён с ' + fmtDate(p.rawDue) + (p.reason ? ': ' + p.reason : ' — нерабочий день') + '.'
+        : 'Дата поставки + ' + (supplier.deferral_days || 0) + ' дн. отсрочки.';
+    } catch (e) {
+      if (seq !== deliveryPreviewSeq) return;
+      dueNoteEl.textContent = 'Календарь не проверен в предпросмотре; сервер всё равно перенесёт нерабочий день.';
+    }
+  };
+  const update = (refreshDue) => {
+    state.matrixDeliveryDraft = {
+      supplier_id: supplier.id,
+      date: dateEl.value,
+      amount_excl_vat: exclEl.value,
+      vat: vatEl.value,
+    };
+    const excl = readMoney(exclEl, false);
+    const vat = readMoney(vatEl, true);
+    totalEl.value = (excl === null || vat === null) ? '' : fmtMoney(excl + vat);
+    if (refreshDue) updateDue();
+  };
+  dateEl.addEventListener('input', () => update(true));
+  dateEl.addEventListener('change', () => update(true));
+  [exclEl, vatEl].forEach((input) => {
+    input.addEventListener('input', () => update(false));
+    input.addEventListener('change', () => update(false));
+  });
+  $('#dClear', panel).onclick = () => {
+    exclEl.value = '';
+    vatEl.value = '';
+    showError('');
+    update();
+    exclEl.focus();
+  };
+  saveBtn.onclick = async () => {
+    showError('');
+    const delivery = dateEl.value;
+    const excl = readMoney(exclEl, false);
+    const vat = readMoney(vatEl, true);
+    if (!delivery) { showError('Укажите дату поставки.'); dateEl.focus(); return; }
+    if (excl === null || excl < 0) { showError('Укажите неотрицательную сумму без НДС, например 1 200,00.'); exclEl.focus(); return; }
+    if (vat === null || vat < 0) { showError('Укажите неотрицательную сумму НДС или оставьте поле пустым.'); vatEl.focus(); return; }
+    const total = excl + vat;
+    if (total <= 0) { showError('Сумма с НДС должна быть больше нуля.'); exclEl.focus(); return; }
+    saveBtn.disabled = true;
+    try {
+      // due_date намеренно не присылаем: сервер сам посчитает поставка + отсрочка
+      // и перенесёт нерабочий день по календарю РБ.
+      const created = await api('/api/obligations', {method: 'POST', json: {
+        supplier_id: supplier.id,
+        amount_cents: total,
+        amount_excl_vat_cents: excl,
+        vat_cents: vat,
+        delivery_date: delivery,
+      }});
+      await loadSuppliersCached();
+      state.matrixDeliveryDraft.amount_excl_vat = '';
+      state.matrixDeliveryDraft.vat = '';
+      toast('Поставка добавлена в «Собств» на ' + fmtDate(created.due_date), 'ok');
+      await renderMatrix(view, mondayOfISO(created.due_date));
+    } catch (e) {
+      showError(e.message);
+      saveBtn.disabled = false;
+    }
+  };
+  update(true);
+}
 
 async function renderMatrix(view, targetMonday) {
   const anchor = mondayOfISO(targetMonday || state.matrixAnchor || state.today);
   state.matrixAnchor = anchor;
-  const from = addDaysISO(anchor, -MATRIX_BACK_WEEKS * 7);
-  const to = addDaysISO(from, MATRIX_WEEKS * 7 - 1);
+  const from = anchor;
+  const to = addDaysISO(anchor, 6); // ровно одна неделя: понедельник–воскресенье
   view.innerHTML = '<div class="loading">Загрузка таблицы…</div>';
   const m = await api('/api/matrix?from=' + from + '&to=' + to);
 
-  // Верхняя строка шапки: месяц над датами (сегменты по месяцам, colspan = дни × 2).
+  // Верхняя полоса над датами — только месяц и год (без «Поставщик/Задолженность»).
+  // Первый сегмент дополнительно накрывает две левые колонки, поэтому полоса сплошная.
   let monthHeaders = '';
   for (let i = 0; i < m.days.length;) {
     const d0 = m.days[i];
     let n = 0;
     while (i + n < m.days.length && m.days[i + n].month === d0.month && m.days[i + n].year === d0.year) n++;
-    monthHeaders += '<th colspan="' + (n * 2) + '" class="month-seg">' +
+    const leftCols = monthHeaders === '' ? 2 : 0;
+    monthHeaders += '<th colspan="' + (n * 2 + leftCols) + '" class="month-seg">' +
       capitalizeMonth(MONTHS_RU[d0.month]) + ' ' + d0.year + '</th>';
     i += n;
   }
@@ -319,86 +467,66 @@ async function renderMatrix(view, targetMonday) {
       return '<td class="cell num' + dayCls(d, true) + '"' + attr + '>' + fmtMoneyShort(c.sobstv_cents) + '</td>' +
         '<td class="cell num vyplaty' + dayCls(d, false) + '"' + attr + '>' + (c.vyplaty_cents ? '−' + fmtMoneyShort(c.vyplaty_cents) : '') + '</td>';
     }).join('');
-    return '<tr><td class="sticky-1"><a href="#/supplier/' + encodeURIComponent(r.supplier.id) + '">' + esc(r.supplier.name) + '</a></td>' +
+    return '<tr' + (r.supplier.id === state.matrixSupplierId ? ' class="selected-supplier"' : '') + '>' +
+      '<td class="sticky-1"><button type="button" class="supplier-link" data-delivery-sup="' + esc(r.supplier.id) + '" title="Ввести поставку поставщика">' + esc(r.supplier.name) + '</button></td>' +
       '<td class="sticky-2 num' + (r.range_balance_cents < 0 ? ' neg' : '') + '" title="Задолженность за всё время: ' + esc(fmtMoney(r.balance_cents)) + '">' + fmtMoneyShort(r.range_balance_cents) + '</td>' + cells + '</tr>';
   }).join('');
+  const matrixSuppliers = {};
+  m.rows.forEach((r) => { matrixSuppliers[r.supplier.id] = r.supplier; });
+  const selectedSupplier = matrixSuppliers[state.matrixSupplierId] || supplierById(state.matrixSupplierId);
 
   view.innerHTML =
-    '<div class="toolbar">' +
-    '<button class="btn" id="shiftBack" title="На 8 недель раньше (перечитать данные)">‹‹ Раньше</button>' +
-    '<button class="btn" id="weekBack" title="На неделю назад">‹ Неделя</button>' +
-    '<button class="btn" id="weekFwd" title="На неделю вперёд">Неделя ›</button>' +
-    '<button class="btn" id="shiftFwd" title="На 8 недель позже (перечитать данные)">Позже ››</button>' +
+    '<div class="toolbar matrix-toolbar">' +
+    '<button class="btn" id="weekBack" title="Предыдущая неделя">← Неделя</button>' +
+    '<strong class="week-title">Неделя: ' + fmtDate(from) + ' — ' + fmtDate(to) + '</strong>' +
+    '<button class="btn" id="weekFwd" title="Следующая неделя">Неделя →</button>' +
     '<button class="btn" id="gotoToday">Сегодня</button>' +
     '<label class="muted">Дата <input type="date" id="gotoDate" value="' + esc(anchor) + '"></label>' +
     '<button class="btn" id="gotoBtn">Перейти</button>' +
-    '<strong style="margin-left:8px">с ' + fmtDate(from) + ' по ' + fmtDate(to) + '</strong>' +
-    '<span class="spacer"></span><span class="muted">Задолженность за диапазон: <strong>' + fmtMoney(m.grand_range_cents) +
-    ' ' + esc(state.settings.currency_label || '') + '</strong> · клик по ячейке — операции дня</span></div>' +
-    '<div class="matrix-wrap" id="matrixWrap"><table class="matrix"><thead>' +
-    '<tr class="months"><th class="sticky-1">ПОСТАВЩИК</th><th class="sticky-2">ЗАДОЛЖ.</th>' + monthHeaders + '</tr>' +
-    '<tr class="days"><th class="sticky-1"></th><th class="sticky-2"></th>' + dayHeaders + '</tr>' +
-    '<tr class="kinds"><th class="sticky-1"></th><th class="sticky-2">за период</th>' + kindHeaders + '</tr>' +
+    '<span class="spacer"></span><span class="muted">Задолженность за неделю: <strong>' + fmtMoney(m.grand_range_cents) +
+    ' ' + esc(state.settings.currency_label || '') + '</strong> · поставщик — ввод поставки · ячейка — операции дня</span></div>' +
+    '<div class="matrix-layout"><div class="matrix-main">' +
+    '<div class="matrix-wrap week" id="matrixWrap"><table class="matrix week"><thead>' +
+    '<tr class="months">' + monthHeaders + '</tr>' +
+    '<tr class="days"><th class="sticky-1">ПОСТАВЩИК</th><th class="sticky-2">ЗАДОЛЖ.</th>' + dayHeaders + '</tr>' +
+    '<tr class="kinds"><th class="sticky-1"></th><th class="sticky-2">за неделю</th>' + kindHeaders + '</tr>' +
     '</thead><tbody>' +
     '<tr class="total"><td class="sticky-1">ВСЕГО</td><td class="sticky-2 num">' + fmtMoneyShort(m.grand_range_cents) + '</td>' + totalCells + '</tr>' +
     bodyRows + '</tbody></table></div>' +
-    '<p class="muted">Неделя — с понедельника по воскресенье; горизонтальная прокрутка идёт скачками по неделям. ' +
-    '<span class="legend-dayoff"></span> — выходные и праздничные дни по законодательству РБ (с учётом переносов рабочих дней), ' +
-    'наведите курсор на дату — покажется название праздника. Жёлтым отмечен сегодняшний день. ' +
-    'Как в Excel: дата вверху — срок оплаты с учётом отсрочки; «Собств» — к оплате, «Выплаты» показаны с минусом. ' +
-    'Если за день было несколько операций — в ячейке их сумма.</p>';
+    '<p class="muted">Показана одна неделя — с понедельника по воскресенье. Кнопки «← Неделя» и «Неделя →» ' +
+    'перескакивают сразу на 7 дней. <span class="legend-dayoff"></span> — выходные и праздничные дни по законодательству РБ ' +
+    '(с учётом переносов рабочих дней), наведите курсор на дату — покажется название праздника. Жёлтым отмечен сегодняшний день. ' +
+    'Дата вверху — срок оплаты с учётом отсрочки; «Собств» — к оплате, «Выплаты» показаны с минусом. ' +
+    'Если за день было несколько операций — в ячейке их сумма.</p></div>' +
+    '<aside class="delivery-panel' + (selectedSupplier ? '' : ' hidden') + '" id="deliveryPanel">' + deliveryPanelHtml(selectedSupplier) + '</aside></div>';
 
   view.querySelectorAll('[data-cell-sup]').forEach((td) => {
     td.onclick = () => dayOperationsModal(td.dataset.cellSup, td.dataset.cellDate);
   });
 
-  /* Горизонтальная прокрутка скачками кратно неделе: после остановки скролла
-     подтягиваем вид к ближайшему понедельнику. */
-  const wrap = $('#matrixWrap');
-  const mondayHeads = Array.from(view.querySelectorAll('thead tr.days th.week-start'));
-  const sticky2 = view.querySelector('thead th.sticky-2');
-  const sticky1 = view.querySelector('thead th.sticky-1');
-  const stickyW = (sticky1 && sticky2)
-    ? (sticky2.getBoundingClientRect().right - sticky1.getBoundingClientRect().left)
-    : 262;
-  const contentX = (el) => el.getBoundingClientRect().left - wrap.getBoundingClientRect().left + wrap.scrollLeft;
-  const weekIndexNow = () => {
-    const target = wrap.scrollLeft + stickyW;
-    let best = 0, bestDist = Infinity;
-    mondayHeads.forEach((th, i) => {
-      const dist = Math.abs(contentX(th) - target);
-      if (dist < bestDist) { bestDist = dist; best = i; }
-    });
-    return best;
-  };
-  let snapping = false;
-  const scrollToWeek = (idx, behavior) => {
-    if (idx < 0) { renderMatrix(view, addDaysISO(state.matrixAnchor, -MATRIX_SHIFT_DAYS)); return; }
-    if (idx >= mondayHeads.length) { renderMatrix(view, addDaysISO(state.matrixAnchor, MATRIX_SHIFT_DAYS)); return; }
-    snapping = true;
-    wrap.scrollTo({left: Math.max(0, contentX(mondayHeads[idx]) - stickyW), behavior: behavior || 'smooth'});
-    setTimeout(() => { snapping = false; }, 400);
-  };
-  let snapTimer = null;
-  wrap.addEventListener('scroll', () => {
-    if (snapping) return;
-    clearTimeout(snapTimer);
-    snapTimer = setTimeout(() => scrollToWeek(weekIndexNow()), 120);
+  bindDeliveryPanel(view, selectedSupplier);
+  view.querySelectorAll('[data-delivery-sup]').forEach((btn) => {
+    btn.onclick = () => {
+      const supplier = matrixSuppliers[btn.dataset.deliverySup] || supplierById(btn.dataset.deliverySup);
+      if (!supplier) return;
+      state.matrixSupplierId = supplier.id;
+      view.querySelectorAll('table.matrix tr.selected-supplier').forEach((tr) => tr.classList.remove('selected-supplier'));
+      const row = btn.closest('tr');
+      if (row) row.classList.add('selected-supplier');
+      const panel = $('#deliveryPanel', view);
+      panel.classList.remove('hidden');
+      panel.innerHTML = deliveryPanelHtml(supplier);
+      bindDeliveryPanel(view, supplier);
+      const first = $('#dAmountExclVat', panel);
+      if (first) first.focus();
+    };
   });
 
-  $('#weekBack').onclick = () => scrollToWeek(weekIndexNow() - 1);
-  $('#weekFwd').onclick = () => scrollToWeek(weekIndexNow() + 1);
-  $('#shiftBack').onclick = () => renderMatrix(view, addDaysISO(state.matrixAnchor, -MATRIX_SHIFT_DAYS));
-  $('#shiftFwd').onclick = () => renderMatrix(view, addDaysISO(state.matrixAnchor, MATRIX_SHIFT_DAYS));
+  // Скачкообразная навигация: каждая кнопка сразу показывает соседнюю неделю.
+  $('#weekBack').onclick = () => renderMatrix(view, addDaysISO(anchor, -7));
+  $('#weekFwd').onclick = () => renderMatrix(view, addDaysISO(anchor, 7));
   $('#gotoToday').onclick = () => renderMatrix(view, mondayOfISO(state.today));
   $('#gotoBtn').onclick = () => { const v = $('#gotoDate').value; if (v) renderMatrix(view, mondayOfISO(v)); };
-
-  // Начальная позиция: неделя якоря (без анимации, чтобы не сработал snap).
-  snapping = true;
-  if (mondayHeads[MATRIX_BACK_WEEKS]) {
-    wrap.scrollLeft = Math.max(0, contentX(mondayHeads[MATRIX_BACK_WEEKS]) - stickyW);
-  }
-  setTimeout(() => { snapping = false; }, 50);
 }
 
 async function dayOperationsModal(supplierId, date) {
@@ -519,7 +647,9 @@ async function renderSupplierCard(view, supplierId) {
       '<td class="num">' + fmtMoney(o.amount_cents) + '</td><td class="num">' + fmtMoney(st.paid_cents) + '</td>' +
       '<td class="num' + (st.status === 'overdue' ? ' overdue' : '') + '">' + fmtMoney(st.open_cents) + '</td>' +
       '<td><span class="badge ' + st.status + '">' + STATUS_RU[st.status] + (st.days_overdue ? ' ' + st.days_overdue + ' дн.' : '') + '</span></td>' +
-      '<td>' + esc(o.doc_number || '') + '</td><td>' + esc(o.comment || '') + '</td>' +
+      '<td>' + esc(o.doc_number || '') + '</td><td>' + esc(o.comment || '') +
+      ((o.amount_excl_vat_cents || o.vat_cents)
+        ? '<div class="muted">без НДС: ' + fmtMoney(o.amount_excl_vat_cents || 0) + '; НДС: ' + fmtMoney(o.vat_cents || 0) + '</div>' : '') + '</td>' +
       '<td class="nowrap"><button class="btn btn-small" data-edit-op="obligation" data-id="' + esc(o.id) + '">Изм.</button> ' +
       '<button class="btn btn-small" data-del-op="obligation" data-id="' + esc(o.id) + '">Удал.</button></td></tr>';
   }).join('');
@@ -560,8 +690,11 @@ async function renderSupplierCard(view, supplierId) {
 function operationRowHtml(o) {
   const kind = o.kind === 'obligation'
     ? '<span class="badge partial">Собств</span>' : '<span class="badge paid">Выплата</span>';
+  const vatDetails = (o.kind === 'obligation' && (o.amount_excl_vat_cents || o.vat_cents))
+    ? '<div class="muted">без НДС: ' + fmtMoney(o.amount_excl_vat_cents || 0) + '; НДС: ' + fmtMoney(o.vat_cents || 0) + '</div>'
+    : '';
   return '<tr><td>' + kind + '</td><td>' + esc(o.supplier_name) + '</td><td class="nowrap">' + fmtDate(o.date) + '</td>' +
-    '<td class="num">' + fmtMoney(o.amount_cents) + '</td><td>' + esc(o.doc_number || '') + '</td><td>' + esc(o.comment || '') + '</td>' +
+    '<td class="num">' + fmtMoney(o.amount_cents) + '</td><td>' + esc(o.doc_number || '') + '</td><td>' + esc(o.comment || '') + vatDetails + '</td>' +
     '<td class="nowrap"><button class="btn btn-small" data-edit-op="' + o.kind + '" data-id="' + esc(o.id) + '">Изм.</button> ' +
     '<button class="btn btn-small" data-del-op="' + o.kind + '" data-id="' + esc(o.id) + '">Удал.</button></td></tr>';
 }
@@ -974,13 +1107,22 @@ function obligationForm(opts) {
     '<label class="field">№ накладной / счёта <input type="text" id="oDoc" value="' + esc(init.doc) + '"></label>' +
     '<label class="field">Дата поставки <input type="date" id="oDelivery" value="' + esc(init.delivery) + '"><span class="hint">Необязательно.</span></label>' +
     '<label class="field">Отсрочка, дней <input type="number" id="oDeferral" min="0" max="3650" value="' + (sup0 ? sup0.deferral_days || 0 : 0) + '"></label>' +
-    '<label class="field">Срок оплаты * <input type="date" id="oDue" value="' + esc(init.due) + '"><span class="hint">С учётом отсрочки — дата колонки в Excel. Считается из поставки + отсрочка, можно исправить вручную.</span></label>' +
+    '<label class="field">Срок оплаты * <input type="date" id="oDue" value="' + esc(init.due) + '"><span class="hint">Считается: поставка + отсрочка; выходной/праздник РБ автоматически сдвигается на следующий рабочий день. Можно исправить вручную.</span></label>' +
     '<label class="field">Комментарий <input type="text" id="oComment" value="' + esc(init.comment) + '"></label>' +
     '</div><div class="modal-actions"><button class="btn" id="oCancel">Отмена</button><button class="btn btn-primary" id="oSave">Сохранить</button></div>');
-  const recalcDue = () => {
+  const recalcDue = async () => {
     const delivery = $('#oDelivery', modal).value;
     const deferral = parseInt($('#oDeferral', modal).value, 10) || 0;
-    if (delivery) $('#oDue', modal).value = addDaysISO(delivery, deferral);
+    if (!delivery) return;
+    const rawDue = addDaysISO(delivery, deferral);
+    $('#oDue', modal).value = rawDue;
+    try {
+      const p = await fetchWorkingDue(rawDue);
+      if ($('#oDelivery', modal).value === delivery &&
+          (parseInt($('#oDeferral', modal).value, 10) || 0) === deferral) {
+        $('#oDue', modal).value = p.dueDate;
+      }
+    } catch (e) { /* сервер всё равно применит перенос при пустом due_date; здесь остаётся сырая дата */ }
   };
   $('#oSupplier', modal).onchange = (e) => {
     const sup = supplierById(e.target.value);
@@ -999,6 +1141,12 @@ function obligationForm(opts) {
       deferral_days: parseInt($('#oDeferral', modal).value, 10) || 0,
       doc_number: $('#oDoc', modal).value.trim(), comment: $('#oComment', modal).value.trim(),
     };
+    // Если запись была создана панелью поставки и итог не меняли — сохранить разбивку НДС.
+    if (ex && (ex.amount_excl_vat_cents || ex.vat_cents) &&
+        cents === (ex.amount_excl_vat_cents || 0) + (ex.vat_cents || 0)) {
+      payload.amount_excl_vat_cents = ex.amount_excl_vat_cents || 0;
+      payload.vat_cents = ex.vat_cents || 0;
+    }
     if (!payload.supplier_id) { formError(modal, 'Сначала создайте поставщика.'); return; }
     if (!payload.due_date && !payload.delivery_date) { formError(modal, 'Укажите срок оплаты или дату поставки.'); return; }
     try {

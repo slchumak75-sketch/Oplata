@@ -67,7 +67,7 @@ go test ./pkg/store/    # сверит итоги; при другом файл�
 
 Сборка **без** встроенных реальных данных (например, для публичного распространения):
 заменить `pkg/store/seed.json` на пустую базу
-`{"version":2,"settings":{"company_name":"","currency_label":"руб.","warn_days":3},"suppliers":[],"obligations":[],"payments":[],"buyers":[],"warnings":[]}`
+`{"version":3,"settings":{"company_name":"","currency_label":"руб.","warn_days":3},"suppliers":[],"obligations":[],"payments":[],"buyers":[],"warnings":[]}`
 и обновить/отключить `TestSeedReconciliation`.
 
 ## Диагностика проблем

@@ -245,9 +245,12 @@ type operationView struct {
 	SupplierName string     `json:"supplier_name"`
 	Date         model.Date `json:"date"` // срок оплаты для начисления, дата выплаты для выплаты
 	AmountCents  int64      `json:"amount_cents"`
-	DeliveryDate model.Date `json:"delivery_date,omitempty"`
-	DocNumber    string     `json:"doc_number"`
-	Comment      string     `json:"comment"`
+	// Разбивка начисления по НДС (только obligation; нули опускаются из JSON).
+	AmountExclVATCents int64      `json:"amount_excl_vat_cents,omitempty"`
+	VATCents           int64      `json:"vat_cents,omitempty"`
+	DeliveryDate       model.Date `json:"delivery_date,omitempty"`
+	DocNumber          string     `json:"doc_number"`
+	Comment            string     `json:"comment"`
 }
 
 func (s *Server) handleOperationsList(w http.ResponseWriter, r *http.Request) {
@@ -287,16 +290,19 @@ func (s *Server) handleOperationsList(w http.ResponseWriter, r *http.Request) {
 	if kind == "" || kind == "all" || kind == "obligation" {
 		for _, o := range db.Obligations {
 			if match(o.SupplierID, o.DueDate, o.DocNumber, o.Comment) {
-				ops = append(ops, operationView{"obligation", o.ID, o.SupplierID, names[o.SupplierID],
-					o.DueDate, o.AmountCents, o.DeliveryDate, o.DocNumber, o.Comment})
+				ops = append(ops, operationView{Kind: "obligation", ID: o.ID, SupplierID: o.SupplierID,
+					SupplierName: names[o.SupplierID], Date: o.DueDate, AmountCents: o.AmountCents,
+					AmountExclVATCents: o.AmountExclVATCents, VATCents: o.VATCents,
+					DeliveryDate: o.DeliveryDate, DocNumber: o.DocNumber, Comment: o.Comment})
 			}
 		}
 	}
 	if kind == "" || kind == "all" || kind == "payment" {
 		for _, p := range db.Payments {
 			if match(p.SupplierID, p.Date, p.DocNumber, p.Comment) {
-				ops = append(ops, operationView{"payment", p.ID, p.SupplierID, names[p.SupplierID],
-					p.Date, p.AmountCents, "", p.DocNumber, p.Comment})
+				ops = append(ops, operationView{Kind: "payment", ID: p.ID, SupplierID: p.SupplierID,
+					SupplierName: names[p.SupplierID], Date: p.Date, AmountCents: p.AmountCents,
+					DocNumber: p.DocNumber, Comment: p.Comment})
 			}
 		}
 	}
@@ -316,10 +322,14 @@ func (s *Server) handleOperationsList(w http.ResponseWriter, r *http.Request) {
 // ---------- начисления («Собств») ----------
 
 type obligationRequest struct {
-	SupplierID   string `json:"supplier_id"`
-	DueDate      string `json:"due_date"`
-	AmountCents  int64  `json:"amount_cents"`
-	DeliveryDate string `json:"delivery_date"`
+	SupplierID  string `json:"supplier_id"`
+	DueDate     string `json:"due_date"`
+	AmountCents int64  `json:"amount_cents"`
+	// AmountExclVATCents/VATCents: указатели отличают «разбивки нет» от явного нуля НДС.
+	// Если переданы, AmountCents должен быть их суммой (сумма с НДС) или 0 — тогда посчитаем сами.
+	AmountExclVATCents *int64 `json:"amount_excl_vat_cents"`
+	VATCents           *int64 `json:"vat_cents"`
+	DeliveryDate       string `json:"delivery_date"`
 	// DeferralDays: если DueDate пуст, а DeliveryDate задан, срок = поставка + отсрочка.
 	// nil -> отсрочка поставщика. Фронтенд обычно считает сам и присылает готовый DueDate.
 	DeferralDays *int   `json:"deferral_days"`
@@ -331,6 +341,22 @@ func resolveObligation(db *model.DB, req obligationRequest) (model.Obligation, e
 	sup := db.SupplierByID(req.SupplierID)
 	if sup == nil {
 		return model.Obligation{}, fmt.Errorf("поставщик не найден")
+	}
+	var amountExclVAT, vat int64
+	if (req.AmountExclVATCents == nil) != (req.VATCents == nil) {
+		return model.Obligation{}, fmt.Errorf("укажите обе суммы: без НДС и НДС")
+	}
+	if req.AmountExclVATCents != nil {
+		amountExclVAT = *req.AmountExclVATCents
+		vat = *req.VATCents
+		if amountExclVAT < 0 || vat < 0 {
+			return model.Obligation{}, fmt.Errorf("сумма без НДС и НДС не могут быть отрицательными")
+		}
+		if req.AmountCents == 0 {
+			req.AmountCents = amountExclVAT + vat
+		} else if req.AmountCents != amountExclVAT+vat {
+			return model.Obligation{}, fmt.Errorf("сумма с НДС должна равняться сумме без НДС + НДС")
+		}
 	}
 	if req.AmountCents <= 0 {
 		return model.Obligation{}, fmt.Errorf("сумма к оплате должна быть положительной")
@@ -355,12 +381,15 @@ func resolveObligation(db *model.DB, req obligationRequest) (model.Obligation, e
 		if req.DeferralDays != nil {
 			deferral = *req.DeferralDays
 		}
-		due = delivery.AddDays(deferral)
+		// Срок из поставки + отсрочка: если выпал на выходной/праздник РБ —
+		// ближайший следующий рабочий день (calc.PaymentDueDate).
+		due = calc.PaymentDueDate(delivery, deferral)
 	} else {
 		return model.Obligation{}, fmt.Errorf("укажите срок оплаты (due_date) или дату поставки (delivery_date)")
 	}
 	return model.Obligation{
 		SupplierID: req.SupplierID, DueDate: due, AmountCents: req.AmountCents,
+		AmountExclVATCents: amountExclVAT, VATCents: vat,
 		DeliveryDate: delivery, DocNumber: strings.TrimSpace(req.DocNumber), Comment: strings.TrimSpace(req.Comment),
 	}, nil
 }
@@ -730,7 +759,7 @@ func (s *Server) handleExportCSV(w http.ResponseWriter, r *http.Request) {
 	buf.WriteString("\xef\xbb\xbf") // BOM, чтобы Excel RU открыл UTF-8 корректно
 	cw := csv.NewWriter(&buf)
 	cw.Comma = ';'
-	_ = cw.Write([]string{"Тип", "Поставщик", "Дата", "Сумма", "Дата поставки", "№ документа", "Комментарий"})
+	_ = cw.Write([]string{"Тип", "Поставщик", "Дата", "Сумма", "Дата поставки", "№ документа", "Комментарий", "Сумма без НДС", "НДС"})
 	money := func(c int64) string { return strings.Replace(model.CentsToDecimal(c), ".", ",", 1) }
 	dmy := func(d model.Date) string {
 		if d == "" {
@@ -744,10 +773,14 @@ func (s *Server) handleExportCSV(w http.ResponseWriter, r *http.Request) {
 	}
 	rows := []csvRow{}
 	for _, o := range db.Obligations {
-		rows = append(rows, csvRow{o.DueDate, []string{"Собств (к оплате)", names[o.SupplierID], dmy(o.DueDate), money(o.AmountCents), dmy(o.DeliveryDate), o.DocNumber, o.Comment}})
+		exclVAT, vat := "", ""
+		if o.AmountExclVATCents != 0 || o.VATCents != 0 {
+			exclVAT, vat = money(o.AmountExclVATCents), money(o.VATCents)
+		}
+		rows = append(rows, csvRow{o.DueDate, []string{"Собств (к оплате)", names[o.SupplierID], dmy(o.DueDate), money(o.AmountCents), dmy(o.DeliveryDate), o.DocNumber, o.Comment, exclVAT, vat}})
 	}
 	for _, p := range db.Payments {
-		rows = append(rows, csvRow{p.Date, []string{"Выплата", names[p.SupplierID], dmy(p.Date), money(p.AmountCents), "", p.DocNumber, p.Comment}})
+		rows = append(rows, csvRow{p.Date, []string{"Выплата", names[p.SupplierID], dmy(p.Date), money(p.AmountCents), "", p.DocNumber, p.Comment, "", ""}})
 	}
 	sort.SliceStable(rows, func(i, j int) bool { return rows[i].iso < rows[j].iso })
 	for _, row := range rows {
