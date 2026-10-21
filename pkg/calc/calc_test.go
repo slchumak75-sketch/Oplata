@@ -87,8 +87,14 @@ func TestDashboardAndMatrix(t *testing.T) {
 	}
 
 	m := BuildMatrix(db, 2025, 1)
-	if len(m.Days) != 31 || m.GrandRange != d.TotalDebtCents {
-		t.Fatalf("matrix days=%d grand=%d", len(m.Days), m.GrandRange)
+	// Столбец B — за отображаемый диапазон (январь): o3 от 05.02 сюда НЕ входит.
+	if len(m.Days) != 31 || m.GrandRange != 260_00 {
+		t.Fatalf("matrix days=%d grand=%d, want 26000", len(m.Days), m.GrandRange)
+	}
+	// Диапазон на весь год = общий долг (все операции тестовой базы в 2025 году).
+	year := BuildMatrixRange(db, "2025-01-01", "2025-12-31")
+	if year.GrandRange != d.TotalDebtCents {
+		t.Fatalf("matrix year grand=%d, want %d", year.GrandRange, d.TotalDebtCents)
 	}
 	if m.DayTotals[9].SobstvCents != 100_00 || m.DayTotals[9].VyplatyCents != 40_00 {
 		t.Fatalf("day totals 10.01: %+v", m.DayTotals[9])
