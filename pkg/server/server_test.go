@@ -148,6 +148,45 @@ func TestImportExportRoundTripViaAPI(t *testing.T) {
 	}
 }
 
+func TestBuyersAndSupplierUNP(t *testing.T) {
+	env := newTestEnv(t)
+	// Поставщик с УНП: сохраняется в каноническом виде.
+	code, out := env.req(t, "POST", "/api/suppliers", `{"name":"МАВ","unp":" 123 456 789 ","deferral_days":30}`, true)
+	if code != http.StatusCreated || out["unp"] != "123456789" {
+		t.Fatalf("поставщик с УНП: код=%d ответ=%v", code, out)
+	}
+	// Дубликат УНП у другого поставщика — ошибка.
+	if code, _ := env.req(t, "POST", "/api/suppliers", `{"name":"Другой","unp":"123456789"}`, true); code != http.StatusBadRequest {
+		t.Fatalf("дубликат УНП поставщика: код %d", code)
+	}
+	// Покупатели: создать, найти поиском, изменить, удалить.
+	code, buy := env.req(t, "POST", "/api/buyers", `{"name":"СтройДом","unp":"987654321","note":"опт"}`, true)
+	if code != http.StatusCreated {
+		t.Fatalf("создание покупателя: код=%d ответ=%v", code, buy)
+	}
+	buyID, _ := buy["id"].(string)
+	if code, _ := env.req(t, "POST", "/api/buyers", `{"name":"СтройДом"}`, true); code != http.StatusBadRequest {
+		t.Fatalf("дубликат наименования покупателя: код %d", code)
+	}
+	code, list := env.req(t, "GET", "/api/buyers?q=987", "", false)
+	buyers, _ := list["buyers"].([]any)
+	if code != 200 || len(buyers) != 1 {
+		t.Fatalf("поиск покупателей: код=%d ответ=%v", code, list)
+	}
+	if code, upd := env.req(t, "PUT", "/api/buyers/"+buyID, `{"name":"СтройДом ООО","unp":"987654321"}`, true); code != 200 || upd["name"] != "СтройДом ООО" {
+		t.Fatalf("обновление покупателя: код=%d ответ=%v", code, upd)
+	}
+	if code, _ := env.req(t, "PUT", "/api/buyers/"+buyID, `{"name":"СтройДом ООО","unp":"123"}`, true); code != http.StatusBadRequest {
+		t.Fatalf("невалидный УНП покупателя: код %d", code)
+	}
+	if code, _ := env.req(t, "DELETE", "/api/buyers/"+buyID, "", true); code != http.StatusNoContent {
+		t.Fatalf("удаление покупателя: код %d", code)
+	}
+	if code, _ := env.req(t, "DELETE", "/api/buyers/"+buyID, "", true); code != http.StatusNotFound {
+		t.Fatalf("повторное удаление покупателя: код %d", code)
+	}
+}
+
 func TestHostGuard(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "data.json"), false)
 	if err != nil {

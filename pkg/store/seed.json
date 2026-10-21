@@ -1,5 +1,5 @@
 {
- "version": 1,
+ "version": 2,
  "settings": {
   "company_name": "Строймаркет",
   "currency_label": "руб.",
@@ -10,6 +10,7 @@
   {
    "id": "sup-001",
    "name": "АВИДО",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -17,6 +18,7 @@
   {
    "id": "sup-002",
    "name": "БелАдмиралСтрой",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -24,6 +26,7 @@
   {
    "id": "sup-003",
    "name": "Даверко",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -31,6 +34,7 @@
   {
    "id": "sup-004",
    "name": "Белоптторг",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -38,6 +42,7 @@
   {
    "id": "sup-005",
    "name": "Карио",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -45,6 +50,7 @@
   {
    "id": "sup-006",
    "name": "Сэльвин",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -52,6 +58,7 @@
   {
    "id": "sup-007",
    "name": "Магнум Маркет",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -59,6 +66,7 @@
   {
    "id": "sup-008",
    "name": "Ю-пласт",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -66,6 +74,7 @@
   {
    "id": "sup-009",
    "name": "Алиди",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -73,6 +82,7 @@
   {
    "id": "sup-010",
    "name": "Алваис",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -80,6 +90,7 @@
   {
    "id": "sup-011",
    "name": "Минский ЗИВ",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -87,6 +98,7 @@
   {
    "id": "sup-012",
    "name": "Априм дистрибуция",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -94,6 +106,7 @@
   {
    "id": "sup-013",
    "name": "АСБ Фарбен",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -101,6 +114,7 @@
   {
    "id": "sup-014",
    "name": "Продмир",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -108,6 +122,7 @@
   {
    "id": "sup-015",
    "name": "Аливария",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -115,6 +130,7 @@
   {
    "id": "sup-016",
    "name": "Дилмаркет",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -122,6 +138,7 @@
   {
    "id": "sup-017",
    "name": "Культбытхозторг",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -129,6 +146,7 @@
   {
    "id": "sup-018",
    "name": "Белкиндекор",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -136,6 +154,7 @@
   {
    "id": "sup-019",
    "name": "МАВ",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -143,6 +162,7 @@
   {
    "id": "sup-020",
    "name": "Альтерни",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -150,6 +170,7 @@
   {
    "id": "sup-021",
    "name": "Полесье",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -157,6 +178,7 @@
   {
    "id": "sup-022",
    "name": "Парфюмбытхим",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -164,6 +186,7 @@
   {
    "id": "sup-023",
    "name": "Вилисбел",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -171,6 +194,7 @@
   {
    "id": "sup-024",
    "name": "ВергоХоз",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -178,6 +202,7 @@
   {
    "id": "sup-025",
    "name": "Торговый пасад",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -185,6 +210,7 @@
   {
    "id": "sup-026",
    "name": "ПилотЭлектроПлюс",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -192,6 +218,7 @@
   {
    "id": "sup-027",
    "name": "Ома",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -199,6 +226,7 @@
   {
    "id": "sup-028",
    "name": "ХКБ Трейд",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -206,6 +234,7 @@
   {
    "id": "sup-029",
    "name": "Профифарб",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -213,6 +242,7 @@
   {
    "id": "sup-030",
    "name": "ДжиоСтайлБел",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -220,6 +250,7 @@
   {
    "id": "sup-031",
    "name": "Западный двор",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -227,6 +258,7 @@
   {
    "id": "sup-032",
    "name": "Южный Океан",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -234,6 +266,7 @@
   {
    "id": "sup-033",
    "name": "Терва",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -241,6 +274,7 @@
   {
    "id": "sup-034",
    "name": "Система ООО",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -248,6 +282,7 @@
   {
    "id": "sup-035",
    "name": "ТАБАК",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -255,6 +290,7 @@
   {
    "id": "sup-036",
    "name": "Оберег Торг",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -262,6 +298,7 @@
   {
    "id": "sup-037",
    "name": "Чисто пить",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -269,6 +306,7 @@
   {
    "id": "sup-038",
    "name": "ТД Комплект",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -276,6 +314,7 @@
   {
    "id": "sup-039",
    "name": "Лидское пиво",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -283,6 +322,7 @@
   {
    "id": "sup-040",
    "name": "Сантрэйд",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -290,6 +330,7 @@
   {
    "id": "sup-041",
    "name": "Протовары",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -297,6 +338,7 @@
   {
    "id": "sup-042",
    "name": "Конте",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -304,6 +346,7 @@
   {
    "id": "sup-043",
    "name": "Дезснаб Трейд",
+   "unp": "",
    "deferral_days": 0,
    "note": "",
    "archived": false
@@ -7575,6 +7618,7 @@
    "comment": ""
   }
  ],
+ "buyers": [],
  "warnings": [
   "Алваис, 2025-03-11: «Выплаты» с положительным знаком (117.38) — в Excel выплаты принято писать с минусом. Импортировано как отрицательная выплата (увеличивает задолженность), проверьте запись."
  ]

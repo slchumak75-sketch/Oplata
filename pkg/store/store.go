@@ -27,7 +27,7 @@ const MaxBackups = 20
 // скриптом tools/excel2seed.py. Загружаются ТОЛЬКО при первом запуске,
 // когда файла данных ещё нет (и не задан флаг -no-seed / WithNoSeed).
 // Чтобы собрать exe без чужих данных: заменить файл seed.json на пустую базу
-// ({"version":1,...} с пустыми списками) и пересобрать — см. docs/BUILD.md.
+// ({"version":2,...} с пустыми списками) и пересобрать — см. docs/BUILD.md.
 //
 //go:embed seed.json
 var SeedJSON []byte
@@ -94,10 +94,15 @@ func Open(path string, useSeed bool) (*Store, error) {
 }
 
 // Decode разбирает и валидирует JSON базы. Пустые срезы нормализуются в [] (не null в API).
+// Здесь же живут миграции формата: v1 -> v2 добавляет пустой справочник покупателей
+// и пустой УНП у поставщиков (поля просто отсутствуют в старом JSON).
 func Decode(data []byte) (*model.DB, error) {
 	var db model.DB
 	if err := json.Unmarshal(data, &db); err != nil {
 		return nil, err
+	}
+	if db.Version == 1 {
+		db.Version = 2
 	}
 	if db.Suppliers == nil {
 		db.Suppliers = []model.Supplier{}
@@ -107,6 +112,9 @@ func Decode(data []byte) (*model.DB, error) {
 	}
 	if db.Payments == nil {
 		db.Payments = []model.Payment{}
+	}
+	if db.Buyers == nil {
+		db.Buyers = []model.Buyer{}
 	}
 	if db.Warnings == nil {
 		db.Warnings = []string{}
@@ -172,6 +180,7 @@ func cloneDB(db *model.DB) *model.DB {
 	out.Suppliers = slices.Clone(db.Suppliers)
 	out.Obligations = slices.Clone(db.Obligations)
 	out.Payments = slices.Clone(db.Payments)
+	out.Buyers = slices.Clone(db.Buyers)
 	out.Warnings = slices.Clone(db.Warnings)
 	if out.Suppliers == nil {
 		out.Suppliers = []model.Supplier{}
@@ -181,6 +190,9 @@ func cloneDB(db *model.DB) *model.DB {
 	}
 	if out.Payments == nil {
 		out.Payments = []model.Payment{}
+	}
+	if out.Buyers == nil {
+		out.Buyers = []model.Buyer{}
 	}
 	if out.Warnings == nil {
 		out.Warnings = []string{}

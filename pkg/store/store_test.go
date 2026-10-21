@@ -42,6 +42,20 @@ func TestSeedReconciliation(t *testing.T) {
 	}
 }
 
+// TestDecodeMigratesV1: файл формата v1 (без buyers и unp) открывается как v2.
+func TestDecodeMigratesV1(t *testing.T) {
+	v1 := []byte(`{"version":1,"settings":{"company_name":"Тест","currency_label":"руб.","warn_days":3},
+		"suppliers":[{"id":"s1","name":"АВИДО","deferral_days":0,"note":"","archived":false}],
+		"obligations":[],"payments":[],"warnings":[]}`)
+	db, err := Decode(v1)
+	if err != nil {
+		t.Fatalf("миграция v1: %v", err)
+	}
+	if db.Version != 2 || db.Buyers == nil || len(db.Buyers) != 0 || db.Suppliers[0].UNP != "" {
+		t.Fatalf("после миграции: %+v", db)
+	}
+}
+
 func TestOpenUpdateReload(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "sub", "data.json")
 	st, err := Open(path, false)

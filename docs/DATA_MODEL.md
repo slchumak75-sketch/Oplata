@@ -16,29 +16,38 @@
 
 ```json
 {
-  "version": 1,
+  "version": 2,
   "settings": {"company_name": "Строймаркет", "currency_label": "руб.", "warn_days": 3, "seeded_from": "…"},
-  "suppliers":   [{"id": "sup-01…", "name": "АВИДО", "deferral_days": 14, "note": "", "archived": false}],
+  "suppliers":   [{"id": "sup-01…", "name": "АВИДО", "unp": "123456789", "deferral_days": 14, "note": "", "archived": false}],
   "obligations": [{"id": "obl-…", "supplier_id": "sup-01…", "due_date": "2025-01-15",
                    "amount_cents": 101349, "delivery_date": "2025-01-01", "doc_number": "ТН-12", "comment": ""}],
   "payments":    [{"id": "pay-…", "supplier_id": "sup-01…", "date": "2025-01-15",
                    "amount_cents": 101349, "doc_number": "ПП-7", "comment": ""}],
+  "buyers":      [{"id": "buy-…", "name": "СтройДом ООО", "unp": "987654321", "note": ""}],
   "warnings": ["… предупреждения последнего импорта …"]
 }
 ```
 
 Поля:
 
+- `Supplier.unp` — УНП поставщика (схема v2, необязательно; в Excel отсутствует).
+  Нормализация при сохранении через API: без пробелов, верхний регистр (`model.NormalizeUNP`);
+  проверка: 9–15 букв/цифр, без дублей среди поставщиков (`model.ValidateUNP`).
 - `Supplier.deferral_days` — отсрочка по умолчанию (дней); 0 = не задана. Используется GUI и API
   для предложения `due_date = delivery_date + отсрочка`; хранится всегда явный `due_date`.
+- `Buyer` — покупатель из справочника «Карточка покупателя»: `name`, `unp` (правила как выше,
+  без дублей среди покупателей), `note`. С расчётами не связан, в Excel не выгружается,
+  хранится только в JSON (и попадает в резервные копии). Импорт Excel покупателей не трогает;
+  режим `replace` дополнительно переносит УНП поставщиков по наименованию.
 - `Obligation.due_date` — **срок оплаты с учётом отсрочки** (дата колонки Excel). `delivery_date` необязательна.
 - `Obligation` = колонка «Собств», `Payment` = колонка «Выплаты» (в Excel выплаты с минусом — инверсия только в `excelio`).
 - `settings.warn_days` — порог статуса «скоро срок». `seeded_from` — пометка стартовых данных.
 - `warnings` — показываются баннером в GUI, пока пользователь не скроет (`PUT /api/settings {clear_warnings:true}`).
-- `version` (= `model.SchemaVersion`, сейчас 1). Менять формат → увеличить версию, добавить
-  миграцию в `store.Decode`/рядом, запись в CHANGELOG и здесь.
+- `version` (= `model.SchemaVersion`, сейчас **2**). v1→v2: добавлены `Supplier.unp` и
+  `buyers`; миграция — в `store.Decode` (старый JSON просто получает пустые значения).
+  Менять формат → увеличить версию, добавить миграцию в `store.Decode`/рядом, запись в CHANGELOG и здесь.
 
-IDs: `sup-/obl-/pay-` + 12 hex-символов (`crypto/rand`); в seed — детерминированные `sup-001…`,
+IDs: `sup-/obl-/pay-/buy-` + 12 hex-символов (`crypto/rand`); в seed — детерминированные `sup-001…`,
 `obl-000001…` (порядок Excel). Порядок срезов в файле = порядок отображения списков.
 
 **Seed:** `pkg/store/seed.json` встроен в exe (`//go:embed`) и используется только при первом
@@ -94,6 +103,7 @@ LAN-режим), `Origin == Host` и — для всех не-GET `/api/*` — �
 | `GET /api/suppliers?date=&include_archived=1` | Поставщики со сводками (`calc.SupplierSummary[]`) на дату (по умолчанию сегодня) |
 | `POST /api/suppliers` · `PUT/DELETE /api/suppliers/{id}` | CRUD. Удаление при наличии операций → 400 (предлагается архив) |
 | `GET /api/suppliers/{id}/card?date=` | Карточка: FIFO-обязательства, выплаты, график баланса |
+| `GET /api/buyers?q=` · `POST /api/buyers` · `PUT/DELETE /api/buyers/{id}` | Справочник покупателей (`name`, `unp`, `note`). Удаление без ограничений (операций нет) |
 | `GET /api/operations?supplier_id=&kind=all\|obligation\|payment&from=&to=&q=&limit=500` | Единый журнал, новые сверху, `{total, operations[]}` |
 | `POST /api/obligations` · `PUT/DELETE /api/obligations/{id}` | Начисление. Если `due_date` пуст, но есть `delivery_date` — срок = поставка + `deferral_days` (или отсрочка поставщика) |
 | `POST /api/payments` · `PUT/DELETE /api/payments/{id}` | Выплата |
@@ -108,5 +118,7 @@ LAN-режим), `Origin == Host` и — для всех не-GET `/api/*` — �
 | `GET /` и статика | Встроенный GUI (`pkg/webui/assets`); неизвестный путь → `index.html` |
 
 Фронтенд (`app.js`) — единственная страница, hash-роутинг:
-`#/dashboard`, `#/matrix`, `#/suppliers`, `#/supplier/<id>`, `#/operations`, `#/data`.
+`#/dashboard`, `#/matrix`, `#/suppliers`, `#/supplier/<id>`, `#/buyers`, `#/operations`, `#/data`.
+В синей шапке — кнопки «Карточка поставщика» и «Карточка покупателя» (модальные карточки
+справочников: наименование, УНП, у поставщика — отсрочка; добавить/удалить/сохранить).
 Никаких внешних запросов (полностью офлайн): шрифты системные, библиотек нет.
