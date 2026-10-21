@@ -95,12 +95,17 @@ jobs:
       - name: ZIP-архив со всеми вариантами + контрольные суммы
         shell: pwsh
         run: |
-          Get-ChildItem dist | Format-Table Name, Length
-          Compress-Archive -Path dist/*.exe -DestinationPath ("dist/oplata-" + "${{ github.ref_name }}" + "-windows-amd64.zip")
-          Get-ChildItem dist -File | ForEach-Object {
-            (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower() + "  " + $_.Name
-          } | Out-File -Encoding ascii dist/SHA256SUMS.txt
-          Get-Content dist/SHA256SUMS.txt
+          # Список файлов фиксируем ДО записи SHA256SUMS.txt и сам файл сумм исключаем:
+          # иначе Get-ChildItem (стриминговый конвейер) может подобрать SHA256SUMS.txt,
+          # пока Out-File его держит, и Get-FileHash упадёт по блокировке (релиз v0.1.0, 1-я попытка).
+          $exe = @(Get-ChildItem dist -Filter *.exe -File)
+          if ($exe.Count -eq 0) { echo "::error title=release::в dist нет ни одного exe"; Get-ChildItem dist -Recurse | ForEach-Object { echo "::error title=release dist::$($_.FullName)" }; exit 1 }
+          echo "::notice title=release dist::$($exe.Name -join ', ')"
+          Compress-Archive -Path $exe.FullName -DestinationPath ("dist/oplata-" + "${{ github.ref_name }}" + "-windows-amd64.zip")
+          $files = @(Get-ChildItem dist -File | Where-Object { $_.Name -ne 'SHA256SUMS.txt' } | Sort-Object Name)
+          $lines = @($files | ForEach-Object { (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower() + "  " + $_.Name })
+          $lines | Out-File -Encoding ascii dist/SHA256SUMS.txt
+          $lines | ForEach-Object { echo "::notice title=sha256::$_" }
       - uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.ref_name }}
