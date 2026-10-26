@@ -1,13 +1,10 @@
 name: Release
 
-# Релиз создаётся автоматически при пуше тега вида v1.2.3:
-#   git tag v0.1.0 && git push origin v0.1.0
-# В релиз попадают: oplata.exe (единственный вариант приложения),
-# zip с ним и SHA256SUMS.txt.
+# Быстрый релиз по решению владельца: один Linux-job кросс-компилирует
+# oplata.exe, упаковывает его и публикует GitHub Release.
+# Тесты здесь не повторяются, а нативный Windows-runner не используется:
+# тег разрешается ставить только на коммит main с уже зелёным CI.
 # Теги с суффиксом (v0.1.0-beta.1) помечаются как pre-release.
-#
-# Упрощение после v0.7.0: тесты и нативная Windows-сборка выполняются параллельно,
-# а упаковка готового EXE делается на Linux (zip + sha256sum) без третьего Windows-runner.
 
 on:
   push:
@@ -21,55 +18,22 @@ env:
   GO_VERSION: "1.25"
 
 jobs:
-  test:
-    name: Тесты ядра (Linux)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: false
-      - run: go vet ./...
-      - run: go test ./...
-
-  build-windows:
-    name: Сборка oplata.exe (Windows)
-    runs-on: windows-latest
-    defaults:
-      run:
-        shell: bash
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-go@v7
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: false
-      - name: Сборка
-        run: |
-          mkdir -p dist
-          go build -trimpath -ldflags "-s -w -H windowsgui -X main.version=${{ github.ref_name }}" -o dist/oplata.exe ./cmd/oplata
-          test -s dist/oplata.exe && head -c 2 dist/oplata.exe | grep -q MZ
-      - uses: actions/upload-artifact@v7
-        with:
-          name: oplata-windows-amd64
-          path: dist/
-          if-no-files-found: error
-
   release:
-    name: GitHub Release
-    needs: [test, build-windows]
+    name: Сборка и публикация релиза (Linux)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/download-artifact@v8
+      - uses: actions/checkout@v7
+      - uses: actions/setup-go@v7
         with:
-          pattern: oplata-*
-          path: dist
-          merge-multiple: true
-      - name: ZIP-архив + контрольные суммы
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: Кросс-компиляция oplata.exe, ZIP и контрольные суммы
         run: |
           set -euo pipefail
+          mkdir -p dist
+          GOOS=windows GOARCH=amd64 CGO_ENABLED=0 go build -trimpath -ldflags "-s -w -H windowsgui -X main.version=${GITHUB_REF_NAME}" -o dist/oplata.exe ./cmd/oplata
           test -s dist/oplata.exe
+          head -c 2 dist/oplata.exe | grep -q MZ
           zip_name="oplata-${GITHUB_REF_NAME}-windows-amd64.zip"
           echo "::notice title=release dist::oplata.exe"
           (cd dist && zip -9 "$zip_name" oplata.exe >/dev/null)
