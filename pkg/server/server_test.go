@@ -311,6 +311,49 @@ func TestBuyersAndSupplierWithoutUNP(t *testing.T) {
 	}
 }
 
+func TestClearAmountsPreservesCounterparties(t *testing.T) {
+	env := newTestEnv(t)
+	if code, _ := env.req(t, "POST", "/api/buyers", `{"name":"Покупатель для очистки"}`, true); code != http.StatusCreated {
+		t.Fatalf("создание покупателя: код %d", code)
+	}
+	if code, _ := env.req(t, "POST", "/api/obligations", `{"supplier_id":"s1","due_date":"2025-01-10","amount_cents":10000}`, true); code != http.StatusCreated {
+		t.Fatalf("создание прихода: код %d", code)
+	}
+	if code, _ := env.req(t, "POST", "/api/payments", `{"supplier_id":"s1","date":"2025-01-12","amount_cents":4000}`, true); code != http.StatusCreated {
+		t.Fatalf("создание оплаты: код %d", code)
+	}
+	if code, _ := env.req(t, "POST", "/api/clear-amounts", `{"confirm":"WRONG"}`, true); code != http.StatusBadRequest {
+		t.Fatalf("очистка без правильного подтверждения: код %d", code)
+	}
+	code, ops := env.req(t, "GET", "/api/operations", "", false)
+	if code != 200 || ops["total"].(float64) != 2 {
+		t.Fatalf("операции после неверного подтверждения должны сохраниться: код=%d ответ=%v", code, ops)
+	}
+
+	code, cleared := env.req(t, "POST", "/api/clear-amounts", `{"confirm":"CLEAR_AMOUNTS"}`, true)
+	if code != 200 || cleared["removed_obligations"].(float64) != 1 || cleared["removed_payments"].(float64) != 1 {
+		t.Fatalf("очистка сумм: код=%d ответ=%v", code, cleared)
+	}
+	code, ops = env.req(t, "GET", "/api/operations", "", false)
+	if code != 200 || ops["total"].(float64) != 0 {
+		t.Fatalf("операции после очистки: код=%d ответ=%v", code, ops)
+	}
+	code, suppliers := env.req(t, "GET", "/api/suppliers", "", false)
+	supplierList, _ := suppliers["suppliers"].([]any)
+	if code != 200 || len(supplierList) != 1 {
+		t.Fatalf("поставщик после очистки должен сохраниться: код=%d ответ=%v", code, suppliers)
+	}
+	code, buyers := env.req(t, "GET", "/api/buyers", "", false)
+	buyerList, _ := buyers["buyers"].([]any)
+	if code != 200 || len(buyerList) != 1 {
+		t.Fatalf("покупатель после очистки должен сохраниться: код=%d ответ=%v", code, buyers)
+	}
+	code, dash := env.req(t, "GET", "/api/dashboard?date=2025-02-01", "", false)
+	if code != 200 || dash["total_debt_cents"].(float64) != 0 {
+		t.Fatalf("задолженность после очистки: код=%d ответ=%v", code, dash)
+	}
+}
+
 func TestHostGuard(t *testing.T) {
 	st, err := store.Open(filepath.Join(t.TempDir(), "data.json"))
 	if err != nil {

@@ -845,6 +845,38 @@ func (s *Server) handleReset(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// handleClearAmounts удаляет только числовые операции таблицы: все приходы
+// и оплаты за все даты. Поставщики, покупатели, условия и настройки сохраняются;
+// Store.Update перед перезаписью автоматически делает резервную копию файла.
+func (s *Server) handleClearAmounts(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Confirm string `json:"confirm"`
+	}
+	if err := decodeJSON(r, &req); err != nil || req.Confirm != "CLEAR_AMOUNTS" {
+		writeErr(w, http.StatusBadRequest, "для очистки сумм пришлите {\"confirm\":\"CLEAR_AMOUNTS\"}")
+		return
+	}
+	removedObligations := 0
+	removedPayments := 0
+	err := s.Store.Update(func(db *model.DB) error {
+		removedObligations = len(db.Obligations)
+		removedPayments = len(db.Payments)
+		db.Obligations = []model.Obligation{}
+		db.Payments = []model.Payment{}
+		return nil
+	})
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	s.Log.Printf("очищены все суммы: приходов %d, оплат %d (страховка: папка backups)", removedObligations, removedPayments)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":              "ok",
+		"removed_obligations": removedObligations,
+		"removed_payments":    removedPayments,
+	})
+}
+
 // ---------- ошибки ----------
 
 type notFoundErr struct{ msg string }
