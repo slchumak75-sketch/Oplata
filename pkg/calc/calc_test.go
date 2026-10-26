@@ -125,7 +125,7 @@ func TestDashboardAndMatrix(t *testing.T) {
 		t.Fatalf("обычная суббота 2025-01-11: %+v", w.Days[5])
 	}
 	if w.DayTotals[4].DebtCents != 60_00 || w.Rows[0].Cells[0].DebtCents != 60_00 {
-		t.Fatalf("нарастающий долг недели: total=%+v row=%+v", w.DayTotals[4], w.Rows[0])
+		t.Fatalf("долг дня срока: total=%+v row=%+v", w.DayTotals[4], w.Rows[0])
 	}
 	if !w.Days[6].IsWeekend || !w.Days[6].IsDayOff {
 		t.Fatalf("воскресенье: %+v", w.Days[6])
@@ -135,11 +135,17 @@ func TestDashboardAndMatrix(t *testing.T) {
 	if len(x.Days) != 4 || x.Days[0].Month != 1 || x.Days[3].Month != 2 || x.Days[3].Year != 2025 {
 		t.Fatalf("граница месяцев: %+v", x.Days)
 	}
-	// Диапазон после операций 10.01: входящий баланс переносится в ежедневный «Долг»,
-	// даже если в самих днях диапазона операций s1 нет.
+	// Диапазон после операций 10.01: входящий баланс сохраняется в API, но в
+	// ежедневный «Долг» не переносится. Неоплаченный остаток виден как просрочка.
 	after := BuildMatrixRange(db, "2025-01-11", "2025-01-12", "2025-01-31")
-	if after.Rows[0].OpeningBalanceCents != 60_00 || after.DayTotals[0].DebtCents != 60_00 || after.Rows[0].OverdueCents != 60_00 {
+	if after.Rows[0].OpeningBalanceCents != 60_00 || after.DayTotals[0].DebtCents != 0 || after.Rows[0].OverdueCents != 60_00 {
 		t.Fatalf("входящий долг/просрочка: row=%+v total=%+v", after.Rows[0], after.DayTotals[0])
+	}
+	// Следующая неделя: задолженность диапазона равна нулю, а старый неоплаченный
+	// срок остаётся только в столбце «Просрочено».
+	nextWeek := BuildMatrixRange(db, "2025-01-13", "2025-01-19", "2025-01-31")
+	if nextWeek.Rows[0].RangeBalanceCents != 0 || nextWeek.Rows[0].OverdueCents != 60_00 || nextWeek.GrandRange != 0 {
+		t.Fatalf("следующая неделя: row=%+v grand_range=%d", nextWeek.Rows[0], nextWeek.GrandRange)
 	}
 
 	card := BuildSupplierCard(db, "s1", model.Date("2025-01-31"))

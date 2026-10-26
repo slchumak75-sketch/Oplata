@@ -72,6 +72,20 @@ func TestSupplierPaymentModesAndManualHolidays(t *testing.T) {
 	if err := db.Validate(); err == nil {
 		t.Fatal("некорректная дата праздника должна отвергаться")
 	}
+
+	db = NewEmptyDB()
+	if db.Settings.WorkingDays == nil {
+		t.Fatal("у новой базы working_days должен быть [], а не null")
+	}
+	db.Settings.WorkingDays = []Date{"2025-01-04", "2025-01-04"}
+	if err := db.Validate(); err == nil {
+		t.Fatal("дублирующийся рабочий день должен отвергаться")
+	}
+	db.Settings.WorkingDays = []Date{"2025-01-06"}
+	db.Settings.Holidays = []Holiday{{Date: "2025-01-06", Name: "Конфликт"}}
+	if err := db.Validate(); err == nil {
+		t.Fatal("дата не может быть одновременно рабочим и праздничным днём")
+	}
 }
 
 func TestValidateObligationVATBreakdown(t *testing.T) {

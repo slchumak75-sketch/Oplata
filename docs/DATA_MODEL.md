@@ -16,9 +16,10 @@
 
 ```json
 {
-  "version": 5,
+  "version": 6,
   "settings": {"company_name": "Строймаркет", "currency_label": "руб.", "warn_days": 3,
-               "holidays": [{"date": "2025-01-01", "name": "Новый год"}]},
+               "holidays": [{"date": "2025-01-01", "name": "Новый год"}],
+               "working_days": ["2025-01-04"]},
   "suppliers":   [{"id": "sup-01…", "name": "АВИДО", "deferral_days": 14, "note": "",
                    "prepayment": false, "on_realization": false, "archived": false}],
   "obligations": [{"id": "obl-…", "supplier_id": "sup-01…", "due_date": "2025-01-15",
@@ -39,13 +40,14 @@
   `prepayment` и `on_realization` (схема v5) взаимоисключающи. Если выбран любой режим,
   `Supplier.EffectiveDeferralDays()` возвращает 0, GUI делает поле отсрочки неактивным,
   а сервер игнорирует даже явно переданную отсрочку. Когда API сам считает срок из поставки,
-  используется `calc.PaymentDueDate(delivery, effectiveDeferral, settings.holidays)`:
+  используется `calc.PaymentDueDate(delivery, effectiveDeferral, settings)`:
   `delivery_date + эффективная отсрочка`, затем ближайший рабочий день ручного календаря;
   в файле всегда хранится явный итоговый `due_date`.
-- `settings.holidays` (схема v5) — праздничные нерабочие дни, введённые вручную на вкладке
-  «Данные»: `{date, name}`. Рабочий календарь варианта 1: суббота и воскресенье выходные
-  автоматически, все остальные нерабочие дни берутся только из этого списка; даты из
-  законодательства и переносы рабочих дней приложение само не добавляет.
+- `settings.holidays` (схема v5) — вручную отмеченные выходные дни на вкладке «Данные»:
+  `{date, name}`. `settings.working_days` (схема v6) — вручную отмеченные рабочие даты.
+  По умолчанию суббота и воскресенье выходные, будни рабочие; далее применяются эти
+  исключения, причём одна дата не может находиться в обоих списках. Даты из
+  законодательства приложение само не добавляет.
 - `Buyer` — покупатель из справочника «Карточка покупателя»: только `name` и `note`.
   С расчётами не связан, в Excel не выгружается, хранится только в JSON
   (и попадает в резервные копии). Импорт Excel справочник покупателей не трогает.
@@ -62,12 +64,13 @@
 - `Obligation` = «Приход» в GUI / колонка «Собств» в главном листе Excel; `Payment` = «Оплата» / колонка «Выплаты» (в Excel выплаты с минусом — инверсия только в `excelio`).
 - `settings.warn_days` — порог статуса «скоро срок». `seeded_from` — устаревшая пометка бывшего seed в базах, созданных версиями до удаления стартовых данных; в новых базах пусто/отсутствует и сохраняется только для чтения старых файлов.
 - `warnings` — показываются баннером в GUI, пока пользователь не скроет (`PUT /api/settings {clear_warnings:true}`).
-- `version` (= `model.SchemaVersion`, сейчас **5**). v1→v2: добавлены `Supplier.unp` и
+- `version` (= `model.SchemaVersion`, сейчас **6**). v1→v2: добавлены `Supplier.unp` и
   `buyers`; v2→v3: добавлена разбивка начислений по НДС; v3→v4: `Supplier.unp` удалён;
   v4→v5: удалён `Buyer.unp`, добавлены `Supplier.prepayment/on_realization` и
-  `settings.holidays`. Старые УНП игнорируются при загрузке и не записываются обратно.
-  Миграции v1–v4 — в `store.Decode`; он также нормализует `holidays` в `[]`, триммит
-  названия и сортирует список по дате.
+  `settings.holidays`; v5→v6: добавлен `settings.working_days`. Старые УНП
+  игнорируются при загрузке и не записываются обратно. Миграции v1–v5 — в
+  `store.Decode`; он также нормализует `holidays`/`working_days` в `[]`, триммит
+  названия выходных и сортирует оба списка по дате.
   Менять формат → увеличить версию, добавить миграцию в `store.Decode`/рядом, запись в CHANGELOG и здесь.
 
 IDs: `sup-/obl-/pay-/buy-` + 12 hex-символов (`crypto/rand`); в старых базах, созданных
@@ -106,11 +109,14 @@ IDs: `sup-/obl-/pay-/buy-` + 12 hex-символов (`crypto/rand`); в ста�
   списки просроченных (по убыванию дней просрочки) и ближайших сроков (14 дней).
 - **Матрица** (`BuildMatrixRange(from, to, asOf)`; `BuildMatrix(year, month, asOf)` —
   совместимая обёртка): суммы по (поставщик, дата) за диапазон; каждый день несёт
-  ручной рабочий календарь (`weekday` 1=пн…7=вс, `is_day_off` для сб/вс и
-  `settings.holidays`, `holiday_name` — из `pkg/calc/holidays.go`).
-  `range_balance_cents` — сумма колонки B за диапазон; `balance_cents` — задолженность
-  за всё время (подсказка в GUI); `opening_balance_cents` — баланс до `from`;
-  `cells[].debt_cents` и `day_totals[].debt_cents` — нарастающий долг после операций дня;
+  ручной рабочий календарь (`weekday` 1=пн…7=вс; `is_day_off` учитывает сб/вс,
+  `settings.holidays` и приоритетные `settings.working_days`; `holiday_name` — из
+  `pkg/calc/holidays.go`).
+  `cells[].debt_cents` и `day_totals[].debt_cents` — открытые FIFO-остатки начислений,
+  срок которых именно этот день, без входящего баланса. `range_balance_cents` —
+  сумма таких ежедневных «Долгов» внутри диапазона; `balance_cents` — задолженность
+  за всё время (подсказка в GUI); `opening_balance_cents` — баланс до `from`
+  (совместимость API, в ежедневный «Долг» не входит);
   `rows[].overdue_cents`/`grand_overdue_cents` — FIFO-просрочка на `asOf`. GUI «Таблицы»
   запрашивает ровно одну неделю с понедельника по воскресенье, передаёт `date=<сегодня>`,
   показывает слева направо поставщика, «Просрочено», «за неделю», а на каждый день —
@@ -146,7 +152,7 @@ LAN-режим), `Origin == Host` и — для всех не-GET `/api/*` — �
 |---|---|
 | `GET /api/health` | `{status, version}` |
 | `GET /api/bootstrap` | `{version, today, token, settings, warnings, data_file, counts}` — старт GUI |
-| `PUT /api/settings` | Частично: `{company_name?, currency_label?, warn_days?, holidays?, clear_warnings?}` → bootstrap. `holidays` полностью заменяет ручной список (`[{date,name}]`, даты проверяются/не дублируются/сортируются) |
+| `PUT /api/settings` | Частично: `{company_name?, currency_label?, warn_days?, holidays?, working_days?, clear_warnings?}` → bootstrap. `holidays` и `working_days` полностью заменяют соответствующие списки календаря (`[{date,name}]` и `[date]`; даты проверяются/не дублируются/сортируются и не могут пересекаться) |
 | `GET /api/suppliers?date=&include_archived=1` | Поставщики со сводками (`calc.SupplierSummary[]`) на дату (по умолчанию сегодня) |
 | `POST /api/suppliers` · `PUT/DELETE /api/suppliers/{id}` | CRUD (`name`, `deferral_days`, взаимоисключающие `prepayment`/`on_realization`, `note`, `archived`). Удаление при наличии операций → 400 (предлагается архив) |
 | `GET /api/suppliers/{id}/card?date=` | Карточка: FIFO-обязательства, оплаты, график баланса |
@@ -173,5 +179,7 @@ LAN-режим), `Origin == Host` и — для всех не-GET `/api/*` — �
 без поля примечания, у покупателя наименование и примечание; добавить/удалить/сохранить).
 Экран `#/buyers` очищен от справочной таблицы и использует ту же недельную сетку, что
 «Поставщики»; для покупателей сейчас хранятся только `name`/`note`, операций и сумм нет.
-На `#/data` также находится редактор `settings.holidays`.
+На `#/data` находится годовой календарь-редактор `settings.holidays` и
+`settings.working_days`: галочки режима, щелчок по дате, повторный щелчок для отмены,
+кнопка сохранения под календарём.
 Никаких внешних запросов (полностью офлайн): шрифты системные, библиотек нет.

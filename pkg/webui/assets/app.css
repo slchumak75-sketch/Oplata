@@ -95,8 +95,10 @@ table.matrix thead th.sticky-1,table.matrix thead th.sticky-2,table.matrix thead
 table.matrix th.dayoff{background:#f5f0e1}
 table.matrix thead tr.days th.dayoff{background:#efe6cf}
 table.matrix thead tr.kinds th.dayoff{background:#f5f0e1}
-/* Начало недели (понедельник) — жирная левая граница */
-table.matrix th.week-start,table.matrix td.week-start{border-left:2px solid #94a3b8}
+/* Каждый день отделён жирными вертикальными границами слева и справа. */
+table.matrix th.day-start,table.matrix td.day-start{border-left:3px solid #64748b}
+table.matrix th.day-end,table.matrix td.day-end{border-right:3px solid #64748b}
+table.matrix th.day-head{border-left:3px solid #64748b;border-right:3px solid #64748b}
 table.matrix td.cell{cursor:text}
 table.matrix td.cell .cell-input{width:100%;min-width:0;box-sizing:border-box;border:1px solid transparent;border-radius:3px;padding:1px 2px;font:inherit;background:transparent;color:inherit;text-align:right}
 table.matrix td.cell .cell-input:hover{border-color:#cbd5e1;background:#fff}
@@ -126,9 +128,9 @@ table.matrix td.neg{color:var(--red)}
 }
 .matrix-wrap.week{width:100%;max-height:calc(100vh - 250px);overflow-x:hidden;overflow-y:auto}
 table.matrix.week{width:100%;table-layout:fixed;font-size:11px}
-table.matrix.week col.col-entity{width:14%}
-table.matrix.week col.col-side{width:6.5%}
-table.matrix.week col.col-day{width:calc(73% / 21)}
+table.matrix.week col.col-entity{width:9.3333%}
+table.matrix.week col.col-side{width:4.3333%}
+table.matrix.week col.col-day{width:calc(82.0001% / 21)}
 table.matrix.week th,table.matrix.week td{min-width:0;padding:3px 2px;overflow:hidden}
 table.matrix.week th.sticky-1,table.matrix.week td.sticky-1,
 table.matrix.week th.sticky-2,table.matrix.week td.sticky-2,
@@ -189,6 +191,23 @@ table.matrix tr.selected-supplier td.sticky-2,table.matrix tr.selected-supplier 
 .kv .k{color:var(--muted);font-size:12px;font-weight:600}
 .kv .v{font-size:16px;font-weight:700;font-variant-numeric:tabular-nums}
 .danger-zone{border-color:#fecaca}
+
+/* Календарь выходных/рабочих дней на вкладке «Данные» */
+.calendar-controls{display:flex;align-items:center;gap:16px;flex-wrap:wrap;margin-bottom:12px}
+.calendar-controls label{display:flex;align-items:center;gap:7px;font-weight:700;cursor:pointer}
+.calendar-controls .spacer{flex:1}
+.calendar-controls strong{min-width:48px;text-align:center;font-size:16px}
+.work-calendar{display:grid;grid-template-columns:repeat(auto-fit,minmax(235px,1fr));gap:12px}
+.calendar-month{border:1px solid var(--line);border-radius:8px;padding:10px;background:#fff}
+.calendar-month h4{margin:0 0 8px;text-align:center}
+.calendar-weekdays,.calendar-days{display:grid;grid-template-columns:repeat(7,1fr);gap:3px}
+.calendar-weekdays{margin-bottom:4px;color:var(--muted);font-size:11px;font-weight:700;text-align:center}
+.calendar-day{border:1px solid #cbd5e1;border-radius:5px;min-height:29px;padding:3px 0;cursor:pointer;font-variant-numeric:tabular-nums}
+.calendar-day.is-off{background:var(--red);border-color:var(--red);color:#fff}
+.calendar-day.is-work{background:#e5e7eb;color:#334155}
+.calendar-day.is-selected{box-shadow:inset 0 0 0 2px #17202b;font-weight:800}
+.calendar-day.is-today{outline:2px solid var(--blue);outline-offset:-2px}
+.calendar-blank{min-height:29px}
 
 /* Печать: только содержимое экрана */
 @media print{

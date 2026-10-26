@@ -271,7 +271,8 @@ func BuildDashboard(db *model.DB, asOf model.Date) Dashboard {
 }
 
 // Matrix — таблица «как в Excel»: поставщики × дни диапазона. В GUI на каждый день
-// выводятся «Приход», нарастающий «Долг» после операций дня и «Оплата».
+// выводятся «Приход» (сумма начислений со сроком в этот день), «Долг»
+// (неоплаченный остаток именно этих начислений, без нарастающего баланса) и «Оплата».
 // Диапазон задаётся вызывающим кодом: вкладка «Таблица» показывает целиком недели
 // (понедельник–воскресенье), месяц — отдельной строкой шапки над датами.
 type Matrix struct {
@@ -283,7 +284,7 @@ type Matrix struct {
 	Days         []MatrixDay `json:"days"`
 	Rows         []MatrixRow `json:"rows"`
 	DayTotals    []DayTotal  `json:"day_totals"`          // строка «ВСЕГО» (строка 4 Excel)
-	GrandRange   int64       `json:"grand_range_cents"`   // сумма столбца B по всем поставщикам за диапазон
+	GrandRange   int64       `json:"grand_range_cents"`   // сумма всех ежедневных «Долгов» за диапазон
 	GrandOverdue int64       `json:"grand_overdue_cents"` // просрочено по всем поставщикам на AsOf
 }
 
@@ -305,7 +306,7 @@ type MatrixDay struct {
 // DayTotal — итоги всех поставщиков за день.
 type DayTotal struct {
 	SobstvCents  int64 `json:"sobstv_cents"`
-	DebtCents    int64 `json:"debt_cents"`    // суммарный баланс всех поставщиков после операций этого дня
+	DebtCents    int64 `json:"debt_cents"`    // открытые остатки начислений всех поставщиков со сроком в этот день
 	VyplatyCents int64 `json:"vyplaty_cents"` // знак как в приложении: выплата положительна (в Excel пишется с минусом)
 }
 
@@ -313,7 +314,7 @@ type DayTotal struct {
 type MatrixCell struct {
 	Date         model.Date `json:"date"`
 	SobstvCents  int64      `json:"sobstv_cents"`
-	DebtCents    int64      `json:"debt_cents"` // баланс поставщика после операций этого дня
+	DebtCents    int64      `json:"debt_cents"` // открытый остаток начислений поставщика со сроком в этот день
 	VyplatyCents int64      `json:"vyplaty_cents"`
 }
 
@@ -321,11 +322,12 @@ type MatrixCell struct {
 type MatrixRow struct {
 	Supplier model.Supplier `json:"supplier"`
 	// OpeningBalanceCents — баланс поставщика до начала отображаемого диапазона.
-	// Он нужен GUI, чтобы показывать нарастающий «Долг» и в дни без операций.
+	// Сохранён в API для совместимости; в ежедневный «Долг» он больше не включается.
 	OpeningBalanceCents int64 `json:"opening_balance_cents"`
 	// OverdueCents — открытые просроченные остатки на дату Matrix.AsOf.
 	OverdueCents int64 `json:"overdue_cents"`
-	// RangeBalanceCents — столбец B: сумма по строке за выбранный диапазон (Собств − Выплаты).
+	// RangeBalanceCents — задолженность именно показанного диапазона: сумма открытых
+	// остатков начислений, срок оплаты которых находится внутри диапазона.
 	RangeBalanceCents int64 `json:"range_balance_cents"`
 	// BalanceCents — фактическая задолженность за всё время (все годы).
 	BalanceCents int64        `json:"balance_cents"`
@@ -344,7 +346,7 @@ func BuildMatrixRange(db *model.DB, from, to, asOf model.Date) Matrix {
 	dayIndex := make(map[model.Date]int)
 	for d := from; ; d = d.AddDays(1) {
 		year, month := d.YearMonth()
-		dayOff, offName := DayOffInfo(d, db.Settings.Holidays)
+		dayOff, offName := DayOffInfo(d, db.Settings)
 		holidayName, isHoliday := HolidayName(d, db.Settings.Holidays)
 		name := offName
 		if isHoliday {
@@ -355,7 +357,7 @@ func BuildMatrixRange(db *model.DB, from, to, asOf model.Date) Matrix {
 			Date: d, Day: d.Time().Day(), Month: month, Year: year,
 			Weekday: WeekdayMon1(d), IsWeekend: IsWeekend(d),
 			IsHoliday: isHoliday, IsDayOff: dayOff, HolidayName: name,
-			IsWorkdayTransfer: IsWorkingSaturday(d),
+			IsWorkdayTransfer: IsWorkingSaturday(d, db.Settings),
 		})
 		if d >= to {
 			break
@@ -364,13 +366,18 @@ func BuildMatrixRange(db *model.DB, from, to, asOf model.Date) Matrix {
 	m.DayTotals = make([]DayTotal, len(m.Days))
 
 	obs, pays := BySupplier(db)
-	var grandOpening int64
 	for _, s := range db.Suppliers {
 		row := MatrixRow{Supplier: s, Cells: []MatrixCell{}}
 		states, _ := Allocate(obs[s.ID], pays[s.ID], asOf)
+		openByDue := make(map[model.Date]int64)
 		for _, st := range states {
 			if st.Status == StatusOverdue {
 				row.OverdueCents += st.OpenCents
+			}
+			if idx, ok := dayIndex[st.Obligation.DueDate]; ok {
+				openByDue[st.Obligation.DueDate] += st.OpenCents
+				row.RangeBalanceCents += st.OpenCents
+				m.DayTotals[idx].DebtCents += st.OpenCents
 			}
 		}
 		byDate := make(map[model.Date]*MatrixCell)
@@ -379,7 +386,6 @@ func BuildMatrixRange(db *model.DB, from, to, asOf model.Date) Matrix {
 				row.OpeningBalanceCents += o.AmountCents
 			}
 			if idx, ok := dayIndex[o.DueDate]; ok {
-				row.RangeBalanceCents += o.AmountCents
 				cellFor(byDate, o.DueDate).SobstvCents += o.AmountCents
 				m.DayTotals[idx].SobstvCents += o.AmountCents
 			}
@@ -390,29 +396,20 @@ func BuildMatrixRange(db *model.DB, from, to, asOf model.Date) Matrix {
 				row.OpeningBalanceCents -= p.AmountCents
 			}
 			if idx, ok := dayIndex[p.Date]; ok {
-				row.RangeBalanceCents -= p.AmountCents
 				cellFor(byDate, p.Date).VyplatyCents += p.AmountCents
 				m.DayTotals[idx].VyplatyCents += p.AmountCents
 			}
 			row.BalanceCents -= p.AmountCents
 		}
-		running := row.OpeningBalanceCents
 		for _, md := range m.Days {
 			if c, ok := byDate[md.Date]; ok {
-				running += c.SobstvCents - c.VyplatyCents
-				c.DebtCents = running
+				c.DebtCents = openByDue[md.Date]
 				row.Cells = append(row.Cells, *c)
 			}
 		}
-		grandOpening += row.OpeningBalanceCents
 		m.GrandRange += row.RangeBalanceCents
 		m.GrandOverdue += row.OverdueCents
 		m.Rows = append(m.Rows, row)
-	}
-	running := grandOpening
-	for i := range m.DayTotals {
-		running += m.DayTotals[i].SobstvCents - m.DayTotals[i].VyplatyCents
-		m.DayTotals[i].DebtCents = running
 	}
 	return m
 }

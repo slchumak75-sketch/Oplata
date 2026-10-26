@@ -199,6 +199,15 @@ func TestDeliveryVATAndWorkingDueDate(t *testing.T) {
 	if code != 200 || updated["delivery_date"] != "2025-01-01" {
 		t.Fatalf("обновление с infer: код=%d ответ=%v", code, updated)
 	}
+	// Суббота, вручную отмеченная рабочей в календаре «Данные», не переносит срок.
+	if code, _ := env.req(t, "PUT", "/api/settings", `{"working_days":["2025-01-04"]}`, true); code != 200 {
+		t.Fatalf("сохранение рабочего дня: код %d", code)
+	}
+	code, workingSaturday := env.req(t, "POST", "/api/obligations",
+		`{"supplier_id":"s1","delivery_date":"2024-12-21","amount_cents":1000}`, true)
+	if code != http.StatusCreated || workingSaturday["due_date"] != "2025-01-04" {
+		t.Fatalf("срок на рабочей субботе: код=%d ответ=%v", code, workingSaturday)
+	}
 }
 
 func TestImportExportRoundTripViaAPI(t *testing.T) {

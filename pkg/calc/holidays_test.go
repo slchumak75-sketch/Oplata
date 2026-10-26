@@ -12,6 +12,8 @@ var manualHolidaysForTest = []model.Holiday{
 	{Date: "2025-01-07", Name: "Ручной праздник"},
 }
 
+var manualCalendarForTest = model.Settings{Holidays: manualHolidaysForTest, WorkingDays: []model.Date{}}
+
 func TestDayOffInfoManualCalendar(t *testing.T) {
 	off := []model.Date{
 		"2025-01-04", // суббота
@@ -20,7 +22,7 @@ func TestDayOffInfoManualCalendar(t *testing.T) {
 		"2025-01-07", // вручную введённый праздник
 	}
 	for _, d := range off {
-		if dayOff, _ := DayOffInfo(d, manualHolidaysForTest); !dayOff {
+		if dayOff, _ := DayOffInfo(d, manualCalendarForTest); !dayOff {
 			t.Errorf("%s должен быть нерабочим днём", d)
 		}
 	}
@@ -30,14 +32,18 @@ func TestDayOffInfoManualCalendar(t *testing.T) {
 		"2025-05-01", // будний день; станет нерабочим только после ручного ввода
 	}
 	for _, d := range work {
-		if dayOff, name := DayOffInfo(d, nil); dayOff {
+		if dayOff, name := DayOffInfo(d, model.Settings{}); dayOff {
 			t.Errorf("%s без ручного праздника должен быть рабочим днём, получено выходной (%s)", d, name)
 		}
 	}
-	// Суббота, которая в старом законодательном календаре была рабочей из-за переноса,
-	// в ручном календаре остаётся обычной выходной субботой.
-	if dayOff, _ := DayOffInfo("2025-01-11", nil); !dayOff {
+	// Без ручной отметки суббота остаётся обычной выходной; дата из WorkingDays
+	// делает её рабочей.
+	if dayOff, _ := DayOffInfo("2025-01-11", model.Settings{}); !dayOff {
 		t.Error("2025-01-11 должна быть обычной выходной субботой")
+	}
+	workingSaturday := model.Settings{WorkingDays: []model.Date{"2025-01-11"}}
+	if dayOff, _ := DayOffInfo("2025-01-11", workingSaturday); dayOff || !IsWorkingSaturday("2025-01-11", workingSaturday) {
+		t.Error("2025-01-11 должна стать вручную отмеченной рабочей субботой")
 	}
 	if name, ok := HolidayName("2025-01-07", manualHolidaysForTest); !ok || name != "Ручной праздник" {
 		t.Errorf("ручной праздник не распознан: %q %v", name, ok)
@@ -54,28 +60,33 @@ func TestNextWorkingDayAndPaymentDueDate(t *testing.T) {
 		{"2025-01-11", "2025-01-13"}, // обычная суббота → понедельник
 	}
 	for _, tc := range cases {
-		if got := NextWorkingDay(tc.in, manualHolidaysForTest); got != tc.want {
+		if got := NextWorkingDay(tc.in, manualCalendarForTest); got != tc.want {
 			t.Errorf("NextWorkingDay(%s)=%s, ожидалось %s", tc.in, got, tc.want)
 		}
 	}
 	// Без ручного списка 1 января — рабочий будний день.
-	if got := PaymentDueDate("2025-01-01", 0, nil); got != "2025-01-01" {
+	if got := PaymentDueDate("2025-01-01", 0, model.Settings{}); got != "2025-01-01" {
 		t.Fatalf("PaymentDueDate без ручных праздников=%s", got)
 	}
 	// Поставка 21.12.2024 + 14 дней = суббота 04.01.2025; с ручными праздниками срок — 08.01.2025.
-	if got := PaymentDueDate("2024-12-21", 14, manualHolidaysForTest); got != "2025-01-08" {
+	if got := PaymentDueDate("2024-12-21", 14, manualCalendarForTest); got != "2025-01-08" {
 		t.Fatalf("PaymentDueDate=%s", got)
+	}
+	// Если суббота вручную отмечена рабочей, тот же срок остаётся на 04.01.2025.
+	workingCalendar := model.Settings{WorkingDays: []model.Date{"2025-01-04"}}
+	if got := PaymentDueDate("2024-12-21", 14, workingCalendar); got != "2025-01-04" {
+		t.Fatalf("PaymentDueDate с рабочей субботой=%s", got)
 	}
 	// Обратный расчёт для ручного ввода в «Таблице»: самая ранняя поставка,
 	// дающая перенесённый срок 08.01.2025 при отсрочке 14 дней, — 21.12.2024.
-	if got := DeliveryDateForDueDate("2025-01-08", 14, manualHolidaysForTest); got != "2024-12-21" {
+	if got := DeliveryDateForDueDate("2025-01-08", 14, manualCalendarForTest); got != "2024-12-21" {
 		t.Fatalf("DeliveryDateForDueDate(перенесённый срок)=%s", got)
 	}
-	if got := DeliveryDateForDueDate("2025-01-15", 14, manualHolidaysForTest); got != "2025-01-01" {
+	if got := DeliveryDateForDueDate("2025-01-15", 14, manualCalendarForTest); got != "2025-01-01" {
 		t.Fatalf("DeliveryDateForDueDate(обычный срок)=%s", got)
 	}
 	// Срок вручную оставлен на нерабочем дне: дата поставки = срок - отсрочка.
-	if got := DeliveryDateForDueDate("2025-01-04", 14, manualHolidaysForTest); got != "2024-12-21" {
+	if got := DeliveryDateForDueDate("2025-01-04", 14, manualCalendarForTest); got != "2024-12-21" {
 		t.Fatalf("DeliveryDateForDueDate(нерабочий срок)=%s", got)
 	}
 }
