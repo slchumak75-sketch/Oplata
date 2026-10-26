@@ -4,8 +4,8 @@
 
 ```
 go.mod / pkg/... / cmd/oplata      Корневой (и единственный) модуль: ТОЛЬКО стандартная библиотека Go (go.sum не нужен!)
-.github/workflows/ci.yml           Быстрые тесты + кросс-сборка oplata.exe на PR/main (артефакты)
-.github/workflows/release.yml      Релиз при пуше тега v*: oplata.exe + zip + SHA256SUMS.txt
+.github/workflows/ci.yml           Один быстрый Linux-job: релевантные проверки + кросс-сборка на PR/main
+.github/workflows/release.yml      Один Linux-job при пуше тега v*: кросс-сборка + zip + SHA256SUMS.txt
 tools/exportdemo + verify_export.py CI-проверка прямого импорта исходного Excel и последующего экспорта
 ```
 
@@ -15,7 +15,7 @@ tools/exportdemo + verify_export.py CI-проверка прямого импо�
 
 Версия зафиксирована: **Go 1.25** (`env.GO_VERSION` в workflow; корневой `go.mod` заявляет `go 1.23` —
 минимум из-за паттернов `http.ServeMux` и пакета `slices`).
-Экшены: `actions/checkout@v7`, `actions/setup-go@v7`, `upload-artifact@v7`, `download-artifact@v8`,
+Экшены: `actions/checkout@v7`, `actions/setup-go@v7`, `upload-artifact@v7`,
 `softprops/action-gh-release@v3` (обновлять осознанно, проверяя changelog экшенов).
 
 Ядро на чистом stdlib тестируется на Linux за секунды и кросс-компилируется в Windows exe отовсюду.
@@ -24,13 +24,16 @@ tools/exportdemo + verify_export.py CI-проверка прямого импо�
 ## Автоматическая сборка на GitHub Actions
 
 - **CI** (автоматически: `pull_request` и `push` только в `main`; для рабочей ветки без PR —
-  ручной `workflow_dispatch`): один job на ubuntu — gofmt `cmd`+`pkg`, `go vet`, `go test`,
-  при изменениях Excel/модели/инструментов проверка экспорта через openpyxl, затем
-  кросс-компиляция `oplata.exe` для Windows с `-H windowsgui`, проверка PE-заголовка и
-  артефакт **oplata-windows-amd64**. Устаревшие запуски того же PR/ref отменяются
-  (`concurrency.cancel-in-progress`), теги CI не обслуживает.
-- **Release** (`push` тега `v*`): Linux-тесты и нативная Windows-сборка идут параллельно;
-  упаковка ZIP/SHA256 и публикация — на ubuntu после успеха обоих job.
+  ручной `workflow_dispatch`): чистые Markdown-изменения workflow не запускают. В остальных
+  случаях работает один job на ubuntu: по списку изменённых файлов он запускает только
+  релевантное — `gofmt` и `go test ./...` для Go/go.mod/workflow, `node --check` для
+  `app.js`, openpyxl-сверку для Excel/модели/инструментов и кросс-компиляцию
+  `oplata.exe` для Windows при изменениях кода или встроенных GUI-ассетов. Отдельный
+  `go vet` не выполняется (`go test` включает встроенный поднабор vet). Устаревшие запуски
+  того же PR/ref отменяются (`concurrency.cancel-in-progress`), теги CI не обслуживает.
+- **Release** (`push` тега `v*`): один job на ubuntu кросс-компилирует `oplata.exe`,
+  упаковывает ZIP/SHA256 и публикует GitHub Release. Тесты и нативная Windows-сборка
+  не повторяются — тег разрешается ставить только на коммит `main` с уже зелёным CI.
   ```sh
   git tag v0.1.0 && git push origin v0.1.0
   ```

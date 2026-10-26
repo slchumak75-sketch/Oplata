@@ -1,20 +1,24 @@
 name: CI
 
-# Быстрая проверка изменений и тестовая сборка единственного варианта приложения.
-# До v0.7.0 этот workflow запускался и на push рабочей ветки, и на PR с тем же
-# коммитом, а затем ещё ждал отдельный Windows-runner. Теперь:
-#   - автоматический запуск только для PR и push в main (теги обслуживает Release);
-#   - устаревший запуск отменяется при новом коммите в том же PR/ref;
-#   - один Linux-job: тесты + кросс-компиляция Windows EXE (проект — чистый Go stdlib,
-#     CGO не нужен) + артефакт oplata-windows-amd64;
-#   - дорогая сверка Excel через openpyxl — только если изменены Excel/модель/инструменты.
-# Нативная Windows-сборка сохранена в .github/workflows/release.yml.
+# Быстрый режим по решению владельца:
+#   - чистые Markdown-изменения не запускают CI вовсе;
+#   - один Linux-job без отдельного Windows-runner;
+#   - Go-тесты — только при изменениях Go/go.mod/workflow, сборка EXE — только
+#     при изменениях кода или встроенных GUI-ассетов;
+#   - app.js проверяется node --check только если он изменён;
+#   - сверка Excel через openpyxl — только при релевантных изменениях;
+#   - устаревший запуск отменяется при новом коммите.
+# Теги этот workflow не обслуживает: публикацией занимается release.yml.
 
 on:
   push:
     branches:
       - main
+    paths-ignore:
+      - "**/*.md"
   pull_request:
+    paths-ignore:
+      - "**/*.md"
   workflow_dispatch:
 
 concurrency:
@@ -29,36 +33,26 @@ env:
 
 jobs:
   check:
-    name: Тесты и сборка oplata.exe (Linux)
+    name: Быстрая проверка и oplata.exe (Linux)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0
-      - uses: actions/setup-go@v7
-        with:
-          go-version: ${{ env.GO_VERSION }}
-          cache: false
-      - name: gofmt
-        run: |
-          files=$(gofmt -l cmd pkg)
-          if [ -n "$files" ]; then
-            echo "Не отформатированы (gofmt -w):"
-            echo "$files"
-            exit 1
-          fi
-      - name: go vet
-        run: go vet ./...
-      - name: go test
-        run: go test ./...
-      - name: Определить, нужна ли сверка Excel через openpyxl
-        id: excel
+      - name: Определить объём проверки
+        id: scope
         env:
           EVENT_NAME: ${{ github.event_name }}
           PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
           PUSH_BEFORE_SHA: ${{ github.event.before }}
         run: |
           set -euo pipefail
+
+          go_needed=false
+          build_needed=false
+          js_needed=false
+          excel_needed=false
+
           base=""
           if [ "$EVENT_NAME" = "pull_request" ]; then
             base="$PR_BASE_SHA"
@@ -66,22 +60,67 @@ jobs:
             base="$PUSH_BEFORE_SHA"
           fi
 
-          # Если базу определить нельзя (ручной запуск, первый коммит и т.п.) — проверяем.
-          needed=true
           if [ -n "$base" ] && [ "$base" != "0000000000000000000000000000000000000000" ] && git cat-file -e "$base^{commit}" 2>/dev/null; then
             files="$(git -c core.quotePath=false diff --name-only "$base...HEAD")"
             echo "Изменённые файлы:"
             echo "$files"
-            if printf '%s\n' "$files" | grep -Eq '^(pkg/(excelio|model)/|tools/(exportdemo/|verify_export\.py$)|\.github/workflows/ci\.yml$|go\.mod$|Оплаты Строймаркет\.xlsx$)'; then
-              needed=true
+
+            if [ -z "$files" ]; then
+              go_needed=true
+              build_needed=true
+              js_needed=true
+              excel_needed=true
             else
-              needed=false
+              if printf '%s\n' "$files" | grep -Eq '\.go$|^go\.mod$|^\.github/workflows/(ci|release)\.yml$'; then
+                go_needed=true
+              fi
+              if printf '%s\n' "$files" | grep -Eq '\.go$|^go\.mod$|^cmd/|^pkg/|^\.github/workflows/(ci|release)\.yml$'; then
+                build_needed=true
+              fi
+              if printf '%s\n' "$files" | grep -Eq '^pkg/webui/assets/app\.js$'; then
+                js_needed=true
+              fi
+              if printf '%s\n' "$files" | grep -Eq '^(pkg/(excelio|model)/|tools/(exportdemo/|verify_export\.py$)|\.github/workflows/ci\.yml$|go\.mod$|Оплаты Строймаркет\.xlsx$)'; then
+                excel_needed=true
+              fi
             fi
+          else
+            # Ручной запуск или неизвестная база: безопасный полный объём.
+            go_needed=true
+            build_needed=true
+            js_needed=true
+            excel_needed=true
           fi
-          echo "needed=$needed" >> "$GITHUB_OUTPUT"
-          echo "::notice title=verify-export::Сверка Excel через openpyxl нужна: $needed"
+
+          {
+            echo "go=$go_needed"
+            echo "build=$build_needed"
+            echo "js=$js_needed"
+            echo "excel=$excel_needed"
+          } >> "$GITHUB_OUTPUT"
+          echo "::notice title=fast-ci::go=$go_needed build=$build_needed js=$js_needed excel=$excel_needed"
+      - uses: actions/setup-go@v7
+        if: steps.scope.outputs.go == 'true' || steps.scope.outputs.build == 'true' || steps.scope.outputs.excel == 'true'
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: false
+      - name: gofmt
+        if: steps.scope.outputs.go == 'true'
+        run: |
+          files=$(gofmt -l cmd pkg)
+          if [ -n "$files" ]; then
+            echo "Не отформатированы (gofmt -w):"
+            echo "$files"
+            exit 1
+          fi
+      - name: go test
+        if: steps.scope.outputs.go == 'true'
+        run: go test ./...
+      - name: Синтаксис app.js
+        if: steps.scope.outputs.js == 'true'
+        run: node --check pkg/webui/assets/app.js
       - name: Экспорт XLSX открывается сторонним openpyxl и сверяется с оригиналом
-        if: steps.excel.outputs.needed == 'true'
+        if: steps.scope.outputs.excel == 'true'
         run: |
           # Вывод дублируем в аннотации: полные логи Actions не всегда доступны оператору.
           # set +e обязателен: шаги Actions запускаются с bash -e и оборвут вывод диагностики.
@@ -99,6 +138,7 @@ jobs:
           if [ $code -ne 0 ]; then report_fail /tmp/verify.out; exit $code; fi
           echo "::notice title=verify-export::$(tail -1 /tmp/verify.out)"
       - name: Сборка oplata.exe (кросс-компиляция Windows)
+        if: steps.scope.outputs.build == 'true'
         run: |
           VERSION="$(git describe --tags --always 2>/dev/null || echo dev)"
           echo "Версия: $VERSION"
@@ -108,6 +148,7 @@ jobs:
           head -c 2 dist/oplata.exe | grep -q MZ
           ls -lh dist/
       - uses: actions/upload-artifact@v7
+        if: steps.scope.outputs.build == 'true'
         with:
           name: oplata-windows-amd64
           path: dist/
