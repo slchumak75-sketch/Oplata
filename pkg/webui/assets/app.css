@@ -109,22 +109,25 @@ table.matrix tr.total td{background:#fff;font-weight:700;border-top:2px solid #c
 table.matrix td.neg{color:var(--red)}
 .legend-dayoff{display:inline-block;width:12px;height:12px;background:#f5f0e1;border:1px solid #cbbfa0;vertical-align:-2px}
 
-/* «Таблица»: одна неделя + правая панель поставки */
+/* «Поставщики» и «Покупатели»: одна неделя на всю ширину экрана */
 .matrix-toolbar .week-title{white-space:nowrap}
-.matrix-layout{display:flex;gap:14px;align-items:flex-start}
-.matrix-main{flex:1 1 auto;min-width:0}
-.matrix-wrap.week{max-height:calc(100vh - 250px)}
-table.matrix.week{width:100%}
-table.matrix.week th,table.matrix.week td{min-width:52px;padding:3px 4px}
-table.matrix.week th.sticky-1,table.matrix.week td.sticky-1{width:150px;min-width:150px;max-width:150px}
-table.matrix.week th.sticky-2,table.matrix.week td.sticky-2{left:150px;width:92px;min-width:92px;max-width:92px}
-table.matrix.week th.sticky-3,table.matrix.week td.sticky-3{left:242px;width:82px;min-width:82px;max-width:82px}
+.matrix-wrap.week{width:100%;max-height:calc(100vh - 250px);overflow-x:hidden;overflow-y:auto}
+table.matrix.week{width:100%;table-layout:fixed;font-size:11px}
+table.matrix.week col.col-entity{width:14%}
+table.matrix.week col.col-side{width:6.5%}
+table.matrix.week col.col-day{width:calc(73% / 21)}
+table.matrix.week th,table.matrix.week td{min-width:0;padding:3px 2px;overflow:hidden}
+table.matrix.week th.sticky-1,table.matrix.week td.sticky-1,
+table.matrix.week th.sticky-2,table.matrix.week td.sticky-2,
+table.matrix.week th.sticky-3,table.matrix.week td.sticky-3{width:auto;min-width:0;max-width:none}
+table.matrix.week td.sticky-1,table.matrix.week td.sticky-2,table.matrix.week td.sticky-3{position:static}
+table.matrix.week thead th.sticky-1,table.matrix.week thead th.sticky-2,table.matrix.week thead th.sticky-3{left:auto}
+table.matrix.week td.cell .cell-editor{min-width:0}
 table.matrix .supplier-link{display:block;width:100%;border:0;background:transparent;color:var(--blue);padding:0;text-align:left;font-weight:600;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 table.matrix .supplier-link:hover{text-decoration:underline}
 table.matrix tr.selected-supplier td.sticky-1{background:#fff;box-shadow:inset 3px 0 0 var(--blue)}
 table.matrix tr.selected-supplier td.sticky-2,table.matrix tr.selected-supplier td.sticky-3{background:#fff}
-.delivery-panel{flex:0 0 330px;width:330px;position:sticky;top:76px;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px;box-shadow:0 2px 10px rgba(15,23,42,.05)}
-.delivery-panel h3{margin:0}
+.delivery-popup h3{margin:0}
 .delivery-head{display:flex;gap:10px;justify-content:space-between;align-items:flex-start;margin-bottom:10px}
 .delivery-supplier{font-size:16px;font-weight:750;margin-top:3px;overflow-wrap:anywhere}
 .delivery-form{display:grid;gap:10px}
@@ -135,12 +138,6 @@ table.matrix tr.selected-supplier td.sticky-2,table.matrix tr.selected-supplier 
 .delivery-due small{color:var(--muted);line-height:1.35}
 .delivery-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px;flex-wrap:wrap}
 .delivery-note{font-size:12.5px;line-height:1.45}
-@media (max-width:1150px){
-  .matrix-layout{flex-direction:column}
-  .matrix-main{width:100%}
-  .delivery-panel{position:static;width:100%;flex:none}
-}
-
 /* Бейджи статусов */
 .badge{display:inline-block;padding:2px 8px;border-radius:999px;font-size:11.5px;font-weight:700;white-space:nowrap}
 .badge.paid{background:#dcfce7;color:#166534}
@@ -175,7 +172,7 @@ table.matrix tr.selected-supplier td.sticky-2,table.matrix tr.selected-supplier 
 
 /* Печать: только содержимое экрана */
 @media print{
-  .app-header,.app-footer,.toolbar,.warnings,.header-actions,.toasts,.delivery-panel{display:none!important}
+  .app-header,.app-footer,.toolbar,.warnings,.header-actions,.toasts,.modal-backdrop{display:none!important}
   body{background:#fff}
   .view{padding:0}
   .matrix-wrap,.table-wrap{max-height:none;overflow:visible;border:none}
