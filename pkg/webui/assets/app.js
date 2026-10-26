@@ -311,13 +311,13 @@ async function fetchWorkingDue(rawDue) {
   };
 }
 
-function weekDayHeaderClass(d, first) {
-  return (d.is_day_off ? ' dayoff' : '') + (first && d.weekday === 1 ? ' week-start' : '') +
-    (d.date === state.today ? ' today' : '');
+function weekDayHeaderClass(d, edge) {
+  return (d.is_day_off ? ' dayoff' : '') + (edge === true || edge === 'start' ? ' day-start' : '') +
+    (edge === 'end' ? ' day-end' : '') + (d.date === state.today ? ' today' : '');
 }
-function weekDataDayClass(d, first) {
-  // Поля с суммами не закрашиваем: оставляем только границу начала недели.
-  return first && d.weekday === 1 ? ' week-start' : '';
+function weekDataDayClass(d, edge) {
+  // Поля с суммами не закрашиваем: каждый день отделяем только жирными вертикальными границами.
+  return (edge === true || edge === 'start' ? ' day-start' : '') + (edge === 'end' ? ' day-end' : '');
 }
 function weekMatrixColgroup() {
   return '<colgroup><col class="col-entity"><col class="col-side"><col class="col-side">' +
@@ -342,7 +342,7 @@ function weekMatrixHead(days, entityLabel) {
   const kindHeaders = days.map((d) =>
     '<th class="' + weekDayHeaderClass(d, true) + '">Приход</th>' +
     '<th class="' + weekDayHeaderClass(d, false) + '">Долг</th>' +
-    '<th class="' + weekDayHeaderClass(d, false) + '">Оплата</th>').join('');
+    '<th class="' + weekDayHeaderClass(d, 'end') + '">Оплата</th>').join('');
   return '<thead><tr class="months">' + monthHeaders + '</tr>' +
     '<tr class="days"><th class="sticky-1">' + esc(entityLabel) + '</th>' +
     '<th class="sticky-2">ПРОСРОЧЕНО</th><th class="sticky-3">ЗАДОЛЖ.</th>' + dayHeaders + '</tr>' +
@@ -393,14 +393,15 @@ async function clearAllAmounts(view, anchor) {
 function localWeekDays(anchor) {
   const holidays = {};
   for (const h of state.settings.holidays || []) holidays[h.date] = h.name || 'Праздничный день';
+  const workingDays = new Set(state.settings.working_days || []);
   const days = [];
   for (let i = 0; i < 7; i++) {
     const date = addDaysISO(anchor, i);
     const p = date.split('-').map(Number);
     days.push({
       date, day: p[2], month: p[1], year: p[0], weekday: i + 1,
-      is_day_off: i >= 5 || Boolean(holidays[date]),
-      holiday_name: holidays[date] || '',
+      is_day_off: !workingDays.has(date) && (i >= 5 || Boolean(holidays[date])),
+      holiday_name: workingDays.has(date) ? 'Рабочий день' : (holidays[date] || ''),
     });
   }
   return days;
@@ -426,14 +427,14 @@ function deliveryPanelHtml(supplier) {
     '<div class="delivery-form">' +
     '<label class="field">Дата поставки * <input type="date" id="dDeliveryDate" value="' + esc(d.date || state.today) + '"></label>' +
     '<label class="field">Сумма с НДС * <input type="text" class="money" id="dAmount" inputmode="decimal" placeholder="0,00" value="' + esc(d.amount) + '">' +
-    '<span class="hint">Одна сумма уже с НДС в ' + cur + '; она попадёт в «Приход».</span></label>' +
+    '<span class="hint">Одна сумма уже с НДС в ' + cur + '; на срок оплаты она появится в «Долге».</span></label>' +
     '<div class="delivery-due"><span>Срок оплаты</span><strong id="dDueDate">—</strong><small id="dDueNote"></small></div>' +
     '</div>' +
     '<div class="delivery-actions"><button class="btn" id="dClose" type="button">Закрыть</button>' +
     '<button class="btn" id="dClear" type="button">Очистить</button>' +
     '<button class="btn btn-primary" id="dSave" type="button">Приход</button></div>' +
-    '<p class="muted delivery-note">Срок оплаты = дата поставки + отсрочка; при предоплате или реализации отсрочка не применяется. Если дата выпадает на субботу, воскресенье ' +
-    'или введённый вручную праздник, программа сдвигает её на ближайший следующий рабочий день. После сохранения таблица ' +
+    '<p class="muted delivery-note">Срок оплаты = дата поставки + отсрочка; при предоплате или реализации отсрочка не применяется. Если дата выпадает на выходной ' +
+    'по календарю вкладки «Данные», программа сдвигает её на ближайший следующий рабочий день. После сохранения таблица ' +
     'сама перейдёт на неделю срока оплаты.</p>';
 }
 function bindDeliveryPanel(view, supplier, panelRoot) {
@@ -513,7 +514,7 @@ function bindDeliveryPanel(view, supplier, panelRoot) {
       }});
       await loadSuppliersCached();
       state.matrixDeliveryDraft.amount = '';
-      toast('Поставка добавлена в «Приход» на ' + fmtDate(created.due_date), 'ok');
+      toast('Поставка добавлена: «Долг» на ' + fmtDate(created.due_date), 'ok');
       closeModal();
       await renderMatrix(view, mondayOfISO(created.due_date));
     } catch (e) {
@@ -693,7 +694,7 @@ async function renderMatrix(view, targetMonday) {
     const t = m.day_totals[i];
     return '<td class="num' + weekDataDayClass(d, true) + '">' + fmtMoneyShort(t.sobstv_cents) + '</td>' +
       '<td class="num debt' + (t.debt_cents < 0 ? ' neg' : '') + weekDataDayClass(d, false) + '">' + fmtMoneyShort(t.debt_cents) + '</td>' +
-      '<td class="num vyplaty' + weekDataDayClass(d, false) + '">' + (t.vyplaty_cents ? (t.vyplaty_cents > 0 ? '−' : '') + fmtMoneyShort(t.vyplaty_cents) : '') + '</td>';
+      '<td class="num vyplaty' + weekDataDayClass(d, 'end') + '">' + (t.vyplaty_cents ? (t.vyplaty_cents > 0 ? '−' : '') + fmtMoneyShort(t.vyplaty_cents) : '') + '</td>';
   }).join('');
   const visibleRows = m.rows.filter((r) => state.includeArchived || !r.supplier.archived);
   const matrixSuppliers = {};
@@ -704,11 +705,9 @@ async function renderMatrix(view, targetMonday) {
   const bodyRows = visibleRows.map((r) => {
     const byDate = {};
     for (const c of r.cells) byDate[c.date] = c;
-    let runningDebt = r.opening_balance_cents || 0;
     const cells = m.days.map((d) => {
-      const c = byDate[d.date] || {sobstv_cents: 0, vyplaty_cents: 0};
-      runningDebt += (c.sobstv_cents || 0) - (c.vyplaty_cents || 0);
-      const debt = Object.prototype.hasOwnProperty.call(c, 'debt_cents') ? c.debt_cents : runningDebt;
+      const c = byDate[d.date] || {sobstv_cents: 0, debt_cents: 0, vyplaty_cents: 0};
+      const debt = c.debt_cents || 0; // только срок этого дня, без баланса прошлых недель
       const attr = ' data-cell-sup="' + esc(r.supplier.id) + '" data-cell-date="' + d.date + '"';
       const cellInput = (kind, cents, label) => {
         const value = cents ? fmtMoneyShort(cents) : '';
@@ -718,12 +717,12 @@ async function renderMatrix(view, targetMonday) {
       };
       return '<td class="cell num' + weekDataDayClass(d, true) + '"' + attr + ' data-cell-kind="obligation" data-cell-cents="' + c.sobstv_cents + '">' + cellInput('obligation', c.sobstv_cents, 'Приход') + '</td>' +
         '<td class="num debt' + (debt < 0 ? ' neg' : '') + weekDataDayClass(d, false) + '">' + fmtMoneyShort(debt) + '</td>' +
-        '<td class="cell num vyplaty' + weekDataDayClass(d, false) + '"' + attr + ' data-cell-kind="payment" data-cell-cents="' + c.vyplaty_cents + '">' + cellInput('payment', c.vyplaty_cents, 'Оплата') + '</td>';
+        '<td class="cell num vyplaty' + weekDataDayClass(d, 'end') + '"' + attr + ' data-cell-kind="payment" data-cell-cents="' + c.vyplaty_cents + '">' + cellInput('payment', c.vyplaty_cents, 'Оплата') + '</td>';
     }).join('');
     return '<tr' + (r.supplier.id === state.matrixSupplierId ? ' class="selected-supplier"' : '') + '>' +
       '<td class="sticky-1"><button type="button" class="supplier-link" data-delivery-sup="' + esc(r.supplier.id) + '" title="Ввести поставку поставщика">' + esc(r.supplier.name) + '</button></td>' +
       '<td class="sticky-2 num' + (r.overdue_cents > 0 ? ' overdue' : '') + '" title="Просрочено на сегодня">' + fmtMoneyShort(r.overdue_cents) + '</td>' +
-      '<td class="sticky-3 num' + (r.range_balance_cents < 0 ? ' neg' : '') + '" title="Задолженность за всё время: ' + esc(fmtMoney(r.balance_cents)) + '">' + fmtMoneyShort(r.range_balance_cents) + '</td>' + cells + '</tr>';
+      '<td class="sticky-3 num' + (r.range_balance_cents < 0 ? ' neg' : '') + '" title="Сумма ежедневного «Долга» этой недели. Задолженность за всё время: ' + esc(fmtMoney(r.balance_cents)) + '">' + fmtMoneyShort(r.range_balance_cents) + '</td>' + cells + '</tr>';
   }).join('');
   view.innerHTML =
     weekToolbarHtml(anchor, '<span class="summary-label">Задолженность за неделю:</span>' +
@@ -735,10 +734,10 @@ async function renderMatrix(view, targetMonday) {
     '<tr class="total"><td class="sticky-1">ВСЕГО</td><td class="sticky-2 num' + (m.grand_overdue_cents > 0 ? ' overdue' : '') + '">' + fmtMoneyShort(m.grand_overdue_cents) + '</td><td class="sticky-3 num">' + fmtMoneyShort(m.grand_range_cents) + '</td>' + totalCells + '</tr>' +
     bodyRows + '</tbody></table></div>' +
     '<p class="muted">Показана одна неделя — с понедельника по воскресенье. Кнопки «← Неделя» и «Неделя →» ' +
-    'перескакивают сразу на 7 дней. В шапке дат <span class="legend-dayoff"></span> — субботы, воскресенья и праздники, введённые вручную на вкладке «Данные»; ' +
-    'наведите курсор на дату — покажется название праздника. Жёлтым в шапке отмечен сегодняшний день; поля с суммами не закрашиваются. ' +
-    'Слева от «за неделю» показано просрочено на сегодня. Дата вверху — срок оплаты с учётом эффективной отсрочки; для нового прихода из ячейки дата поставки в карточке рассчитывается от срока по отсрочке. ' +
-    '«Приход» — к оплате, «Долг» — баланс поставщика после операций дня, «Оплата» вводится положительной суммой и уменьшает долг. ' +
+    'перескакивают сразу на 7 дней. В шапке дат <span class="legend-dayoff"></span> — выходные по календарю вкладки «Данные»; ' +
+    'наведите курсор на дату — покажется её статус. Жёлтым в шапке отмечен сегодняшний день; поля с суммами не закрашиваются, а дни отделены жирными линиями. ' +
+    'Слева от «за неделю» показано просрочено на сегодня. Дата вверху — срок оплаты: для поставки он считается как дата поставки + отсрочка и переносится с выходного на ближайший рабочий день; при предоплате и реализации отсрочка не применяется. ' +
+    '«Приход» — сумма начислений со сроком в этот день, «Долг» — только их неоплаченный остаток без прошлых недель, «Оплата» вводится положительной суммой. Задолженность за неделю — сумма ежедневных «Долгов» именно этой недели; неоплаченный прошлый срок остаётся в «Просрочено». ' +
     'Суммы можно вводить двумя способами: напрямую в полях «Приход» и «Оплата» (Enter, Tab или уход из поля — сохранить; Esc — отмена; пустое поле — очистить) ' +
     'и через всплывающую форму «Поставка», которая открывается по наименованию поставщика и сама рассчитывает срок оплаты. ' +
     'Если за день было несколько операций — в поле показана их сумма.</p>';
@@ -771,7 +770,7 @@ async function renderBuyers(view, targetMonday) {
   const blankCells = days.map((d) =>
     '<td class="num' + weekDataDayClass(d, true) + '"></td>' +
     '<td class="num debt' + weekDataDayClass(d, false) + '"></td>' +
-    '<td class="num vyplaty' + weekDataDayClass(d, false) + '"></td>').join('');
+    '<td class="num vyplaty' + weekDataDayClass(d, 'end') + '"></td>').join('');
   const buyers = state.buyers || [];
   const bodyRows = buyers.map((b) => {
     const note = b.note ? ' · ' + b.note : '';
@@ -907,8 +906,39 @@ async function renderData(view) {
   const bootData = await api('/api/bootstrap');
   const st = bootData.settings;
   const holidays = [...(st.holidays || [])].sort((a, b) => String(a.date).localeCompare(String(b.date)));
-  const holidayRows = holidays.map((h) => '<tr><td class="nowrap">' + fmtDate(h.date) + '</td><td>' + esc(h.name || 'Праздничный день') + '</td>' +
-    '<td class="nowrap"><button class="btn btn-small btn-danger" data-del-holiday="' + esc(h.date) + '">Удалить</button></td></tr>').join('');
+  const holidayNames = {};
+  for (const h of holidays) holidayNames[h.date] = h.name || 'Выходной день';
+  const selectedOffDays = new Set(holidays.map((h) => h.date));
+  const selectedWorkDays = new Set(st.working_days || []);
+  let calendarYear = parseInt(String(state.today || '').slice(0, 4), 10) || new Date().getFullYear();
+  let calendarMode = 'off';
+  const isCalendarDayOff = (date) => {
+    if (selectedWorkDays.has(date)) return false;
+    if (selectedOffDays.has(date)) return true;
+    const weekday = new Date(isoToUTC(date)).getUTCDay();
+    return weekday === 0 || weekday === 6;
+  };
+  const calendarYearHtml = (year) => {
+    let html = '';
+    for (let month = 1; month <= 12; month++) {
+      const daysInMonth = new Date(Date.UTC(year, month, 0)).getUTCDate();
+      const firstWeekday = (new Date(Date.UTC(year, month - 1, 1)).getUTCDay() + 6) % 7;
+      let cells = '<span class="calendar-blank"></span>'.repeat(firstWeekday);
+      for (let day = 1; day <= daysInMonth; day++) {
+        const date = year + '-' + String(month).padStart(2, '0') + '-' + String(day).padStart(2, '0');
+        const off = isCalendarDayOff(date);
+        const selected = selectedOffDays.has(date) || selectedWorkDays.has(date);
+        cells += '<button type="button" class="calendar-day ' + (off ? 'is-off' : 'is-work') +
+          (selected ? ' is-selected' : '') + (date === state.today ? ' is-today' : '') +
+          '" data-calendar-date="' + date + '" title="' + fmtDate(date) + ' — ' +
+          (off ? 'выходной день' : 'рабочий день') + '">' + day + '</button>';
+      }
+      html += '<section class="calendar-month"><h4>' + capitalizeMonth(MONTHS_RU[month]) + '</h4>' +
+        '<div class="calendar-weekdays"><span>Пн</span><span>Вт</span><span>Ср</span><span>Чт</span><span>Пт</span><span>Сб</span><span>Вс</span></div>' +
+        '<div class="calendar-days">' + cells + '</div></section>';
+    }
+    return html;
+  };
   const exportYear = new Date().getFullYear();
   view.innerHTML =
     '<div class="panel"><h3>📥 Импорт из Excel</h3>' +
@@ -928,15 +958,16 @@ async function renderData(view) {
     '<label class="field">Восстановить из файла <input type="file" id="restoreFile" accept=".json"></label>' +
     '<button class="btn" id="btnRestore">Восстановить</button></div>' +
     '<p class="muted">Программа также автоматически складывает копии в подпапку <b>backups</b> рядом с файлом данных при каждом сохранении (хранятся последние 20).</p></div>' +
-    '<div class="panel"><h3>🗓 Праздничные дни</h3>' +
-    '<p class="muted">Суббота и воскресенье считаются выходными автоматически. Праздники из законодательства программа не подставляет: добавьте нужные нерабочие даты вручную. Они будут отмечены в «Таблице» и учтены при расчёте срока оплаты.</p>' +
-    '<div class="form-grid">' +
-    '<label class="field">Дата праздника * <input type="date" id="holidayDate"></label>' +
-    '<label class="field">Название <input type="text" id="holidayName" placeholder="Например, Новый год"></label></div>' +
-    '<div class="modal-actions"><button class="btn btn-primary" id="btnAddHoliday">Добавить праздник</button></div>' +
-    '<div class="table-wrap"><table class="data"><thead><tr><th>Дата</th><th>Название</th><th></th></tr></thead><tbody>' +
-    (holidayRows || '<tr><td colspan="3" class="muted">Ручных праздничных дней пока нет.</td></tr>') +
-    '</tbody></table></div></div>' +
+    '<div class="panel calendar-panel"><h3>🗓 Выходные и рабочие дни</h3>' +
+    '<div class="calendar-controls">' +
+    '<label><input type="checkbox" id="calendarModeOff" checked> Выходные дни</label>' +
+    '<label><input type="checkbox" id="calendarModeWork"> Рабочие дни</label>' +
+    '<span class="spacer"></span>' +
+    '<button type="button" class="btn btn-small" id="calendarPrevYear" title="Предыдущий год">←</button>' +
+    '<strong id="calendarYearLabel">' + calendarYear + '</strong>' +
+    '<button type="button" class="btn btn-small" id="calendarNextYear" title="Следующий год">→</button></div>' +
+    '<div class="work-calendar" id="workCalendar">' + calendarYearHtml(calendarYear) + '</div>' +
+    '<div class="modal-actions"><button class="btn btn-primary" id="btnSaveCalendar">Сохранить</button></div></div>' +
     '<div class="panel"><h3>⚙ Настройки</h3><div class="form-grid">' +
     '<label class="field">Название организации <input type="text" id="setCompany" value="' + esc(st.company_name || '') + '"></label>' +
     '<label class="field">Подпись валюты <input type="text" id="setCurrency" value="' + esc(st.currency_label || '') + '"></label>' +
@@ -996,29 +1027,54 @@ async function renderData(view) {
       toast('Настройки сохранены', 'ok');
     } catch (e) { toast(e.message, 'error'); }
   };
-  const saveHolidays = async (next) => {
-    const res = await api('/api/settings', {method: 'PUT', json: {holidays: next}});
-    state.settings = res.settings;
-    renderData(view);
+  const calendarModeOff = $('#calendarModeOff', view);
+  const calendarModeWork = $('#calendarModeWork', view);
+  const workCalendar = $('#workCalendar', view);
+  const setCalendarMode = (mode) => {
+    calendarMode = mode;
+    calendarModeOff.checked = mode === 'off';
+    calendarModeWork.checked = mode === 'work';
   };
-  $('#btnAddHoliday').onclick = async () => {
-    const date = $('#holidayDate').value;
-    const name = $('#holidayName').value.trim();
-    if (!date) { toast('Укажите дату праздника', 'error'); $('#holidayDate').focus(); return; }
-    if (holidays.some((h) => h.date === date)) { toast('Эта дата уже есть в списке праздников', 'error'); return; }
-    try {
-      await saveHolidays([...holidays, {date, name}]);
-      toast('Праздничный день добавлен', 'ok');
-    } catch (e) { toast(e.message, 'error'); }
+  calendarModeOff.onchange = () => setCalendarMode('off');
+  calendarModeWork.onchange = () => setCalendarMode('work');
+  const redrawCalendar = () => {
+    $('#calendarYearLabel', view).textContent = String(calendarYear);
+    workCalendar.innerHTML = calendarYearHtml(calendarYear);
   };
-  view.querySelectorAll('[data-del-holiday]').forEach((btn) => {
-    btn.onclick = async () => {
-      try {
-        await saveHolidays(holidays.filter((h) => h.date !== btn.dataset.delHoliday));
-        toast('Праздничный день удалён', 'ok');
-      } catch (e) { toast(e.message, 'error'); }
-    };
+  $('#calendarPrevYear', view).onclick = () => { calendarYear--; redrawCalendar(); };
+  $('#calendarNextYear', view).onclick = () => { calendarYear++; redrawCalendar(); };
+  workCalendar.addEventListener('click', (event) => {
+    const button = event.target.closest('[data-calendar-date]');
+    if (!button) return;
+    const date = button.dataset.calendarDate;
+    const target = calendarMode === 'off' ? selectedOffDays : selectedWorkDays;
+    const other = calendarMode === 'off' ? selectedWorkDays : selectedOffDays;
+    if (target.has(date)) target.delete(date); // повторный щелчок отменяет выбор
+    else {
+      target.add(date);
+      other.delete(date);
+    }
+    redrawCalendar();
   });
+  $('#btnSaveCalendar', view).onclick = async (event) => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    try {
+      const nextHolidays = [...selectedOffDays].sort().map((date) => ({
+        date, name: holidayNames[date] || 'Выходной день',
+      }));
+      const res = await api('/api/settings', {method: 'PUT', json: {
+        holidays: nextHolidays,
+        working_days: [...selectedWorkDays].sort(),
+      }});
+      state.settings = res.settings;
+      toast('Календарь выходных и рабочих дней сохранён', 'ok');
+    } catch (e) {
+      toast(e.message, 'error');
+    } finally {
+      button.disabled = false;
+    }
+  };
   $('#btnReset').onclick = async () => {
     if ($('#resetConfirm').value !== 'RESET') { toast('Введите RESET для подтверждения', 'error'); return; }
     try {

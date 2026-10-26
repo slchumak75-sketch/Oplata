@@ -197,6 +197,7 @@ type settingsRequest struct {
 	CurrencyLabel *string          `json:"currency_label"`
 	WarnDays      *int             `json:"warn_days"`
 	Holidays      *[]model.Holiday `json:"holidays"`
+	WorkingDays   *[]model.Date    `json:"working_days"`
 	ClearWarnings bool             `json:"clear_warnings"`
 }
 
@@ -240,6 +241,26 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				return strings.Compare(string(a.Date), string(b.Date))
 			})
 			db.Settings.Holidays = holidays
+		}
+		if req.WorkingDays != nil {
+			if len(*req.WorkingDays) > 10000 {
+				return fmt.Errorf("слишком много рабочих дней: %d", len(*req.WorkingDays))
+			}
+			seen := make(map[model.Date]bool, len(*req.WorkingDays))
+			workingDays := make([]model.Date, 0, len(*req.WorkingDays))
+			for _, raw := range *req.WorkingDays {
+				date, err := model.ParseDate(string(raw))
+				if err != nil {
+					return fmt.Errorf("рабочий день: %w", err)
+				}
+				if seen[date] {
+					return fmt.Errorf("рабочий день %s указан дважды", date)
+				}
+				seen[date] = true
+				workingDays = append(workingDays, date)
+			}
+			slices.Sort(workingDays)
+			db.Settings.WorkingDays = workingDays
 		}
 		if req.ClearWarnings {
 			db.Warnings = []string{}

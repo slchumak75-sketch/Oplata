@@ -29,8 +29,10 @@ import (
 // v5: удалён Buyer.UNP (поле buyers[].unp игнорируется), у поставщика добавлены
 // взаимоисключающие режимы предоплаты/реализации, а в настройках — праздники,
 // вводимые вручную на вкладке «Данные».
-// Файлы v1–v4 мигрируют в store.Decode.
-const SchemaVersion = 5
+// v6: в настройках добавлены вручную отмеченные рабочие дни (working_days),
+// которые могут делать субботу/воскресенье рабочими в календаре «Данные».
+// Файлы v1–v5 мигрируют в store.Decode.
+const SchemaVersion = 6
 
 // Date — календарная дата в формате ISO yyyy-mm-dd. Сравнение строк == сравнение дат.
 type Date string
@@ -173,13 +175,17 @@ type Settings struct {
 	WarnDays int `json:"warn_days"`
 	// Holidays — нерабочие праздничные дни, введённые вручную.
 	Holidays []Holiday `json:"holidays"`
+	// WorkingDays — даты, вручную отмеченные рабочими в календаре «Данные».
+	// Они имеют приоритет над автоматическими субботой/воскресеньем и не должны
+	// пересекаться с Holidays.
+	WorkingDays []Date `json:"working_days"`
 	// SeededFrom — устаревшая пометка стартовых данных из старых версий; в новых базах пусто.
 	SeededFrom string `json:"seeded_from,omitempty"`
 }
 
 // DefaultSettings возвращает настройки для новой пустой базы.
 func DefaultSettings() Settings {
-	return Settings{CompanyName: "Строймаркет", CurrencyLabel: "руб.", WarnDays: 3, Holidays: []Holiday{}}
+	return Settings{CompanyName: "Строймаркет", CurrencyLabel: "руб.", WarnDays: 3, Holidays: []Holiday{}, WorkingDays: []Date{}}
 }
 
 // DB — всё содержимое файла данных (JSON). Порядок срезов — порядок отображения:
@@ -259,6 +265,22 @@ func (db *DB) Validate() error {
 		if len([]rune(strings.TrimSpace(h.Name))) > 120 {
 			return fmt.Errorf("праздничный день %s: название длиннее 120 символов", h.Date)
 		}
+	}
+	if len(db.Settings.WorkingDays) > 10000 {
+		return fmt.Errorf("слишком много рабочих дней в настройках: %d", len(db.Settings.WorkingDays))
+	}
+	workingDates := make(map[Date]bool, len(db.Settings.WorkingDays))
+	for _, date := range db.Settings.WorkingDays {
+		if !date.Valid() {
+			return fmt.Errorf("рабочий день: некорректная дата %q", date)
+		}
+		if workingDates[date] {
+			return fmt.Errorf("рабочий день %s указан дважды", date)
+		}
+		if holidayDates[date] {
+			return fmt.Errorf("дата %s не может быть одновременно рабочим и праздничным днём", date)
+		}
+		workingDates[date] = true
 	}
 	ids := make(map[string]bool, len(db.Suppliers))
 	names := make(map[string]string, len(db.Suppliers))

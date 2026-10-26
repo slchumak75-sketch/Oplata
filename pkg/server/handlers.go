@@ -390,12 +390,12 @@ func resolveObligation(db *model.DB, req obligationRequest) (model.Obligation, e
 		// Срок из поставки + эффективная отсрочка: если выпал на субботу,
 		// воскресенье или вручную введённый праздник — ближайший следующий
 		// рабочий день (calc.PaymentDueDate).
-		due = calc.PaymentDueDate(delivery, effectiveDeferral, db.Settings.Holidays)
+		due = calc.PaymentDueDate(delivery, effectiveDeferral, db.Settings)
 	} else {
 		return model.Obligation{}, fmt.Errorf("укажите срок оплаты (due_date) или дату поставки (delivery_date)")
 	}
 	if delivery == "" && req.InferDeliveryDate {
-		delivery = calc.DeliveryDateForDueDate(due, effectiveDeferral, db.Settings.Holidays)
+		delivery = calc.DeliveryDateForDueDate(due, effectiveDeferral, db.Settings)
 	}
 	return model.Obligation{
 		SupplierID: req.SupplierID, DueDate: due, AmountCents: req.AmountCents,

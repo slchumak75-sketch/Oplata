@@ -1,10 +1,10 @@
 package calc
 
-// Рабочий календарь приложения (вариант 1 по решению владельца):
-// субботы и воскресенья считаются выходными автоматически, а праздничные
-// нерабочие дни берутся только из списка, введённого вручную на вкладке
-// «Данные» (model.Settings.Holidays). Государственные праздники, Радуница
-// и переносы рабочих дней из законодательства приложение само не подставляет.
+// Рабочий календарь приложения: субботы и воскресенья по умолчанию выходные,
+// остальные дни по умолчанию рабочие. На вкладке «Данные» пользователь вручную
+// отмечает исключения: Settings.Holidays делает дату нерабочей, а
+// Settings.WorkingDays — рабочей (включая субботу и воскресенье). Даты из
+// законодательства приложение само не подставляет.
 
 import (
 	"strings"
@@ -34,17 +34,30 @@ func IsWeekend(date model.Date) bool {
 	return wd == time.Saturday || wd == time.Sunday
 }
 
-// IsWorkingSaturday сохранён для поля матрицы is_workday_transfer.
-// В ручном календаре рабочих суббот нет: все субботы остаются выходными.
-func IsWorkingSaturday(date model.Date) bool {
+// IsManualWorkingDay сообщает, отмечена ли дата рабочей в календаре «Данные».
+func IsManualWorkingDay(date model.Date, settings model.Settings) bool {
+	for _, d := range settings.WorkingDays {
+		if d == date {
+			return true
+		}
+	}
 	return false
 }
 
-// DayOffInfo определяет эффективный статус дня: вручную введённый праздник
-// или календарная суббота/воскресенье — нерабочий день; остальные дни рабочие.
-// name — подпись для подсказки GUI.
-func DayOffInfo(date model.Date, holidays []model.Holiday) (dayOff bool, name string) {
-	if holiday, ok := HolidayName(date, holidays); ok {
+// IsWorkingSaturday сохранён для поля матрицы is_workday_transfer: теперь это
+// суббота или воскресенье, вручную отмеченные рабочим днём.
+func IsWorkingSaturday(date model.Date, settings model.Settings) bool {
+	return IsWeekend(date) && IsManualWorkingDay(date, settings)
+}
+
+// DayOffInfo определяет эффективный статус дня. Вручную отмеченный рабочий день
+// имеет приоритет; далее ручной праздник или календарные суббота/воскресенье
+// считаются нерабочими. name — подпись для подсказки GUI.
+func DayOffInfo(date model.Date, settings model.Settings) (dayOff bool, name string) {
+	if IsManualWorkingDay(date, settings) {
+		return false, "Рабочий день"
+	}
+	if holiday, ok := HolidayName(date, settings.Holidays); ok {
 		return true, holiday
 	}
 	if IsWeekend(date) {
@@ -54,10 +67,10 @@ func DayOffInfo(date model.Date, holidays []model.Holiday) (dayOff bool, name st
 }
 
 // NextWorkingDay возвращает саму дату, если она рабочая, иначе ближайший
-// следующий рабочий день с учётом вручную введённых праздников.
-func NextWorkingDay(date model.Date, holidays []model.Holiday) model.Date {
+// следующий рабочий день по ручному календарю выходных/рабочих дней.
+func NextWorkingDay(date model.Date, settings model.Settings) model.Date {
 	for {
-		dayOff, _ := DayOffInfo(date, holidays)
+		dayOff, _ := DayOffInfo(date, settings)
 		if !dayOff {
 			return date
 		}
@@ -67,8 +80,8 @@ func NextWorkingDay(date model.Date, holidays []model.Holiday) model.Date {
 
 // PaymentDueDate считает срок оплаты поставки: дата поставки + отсрочка в днях,
 // а затем перенос вперёд на ближайший рабочий день, если результат нерабочий.
-func PaymentDueDate(delivery model.Date, deferralDays int, holidays []model.Holiday) model.Date {
-	return NextWorkingDay(delivery.AddDays(deferralDays), holidays)
+func PaymentDueDate(delivery model.Date, deferralDays int, settings model.Settings) model.Date {
+	return NextWorkingDay(delivery.AddDays(deferralDays), settings)
 }
 
 // DeliveryDateForDueDate восстанавливает дату поставки по известному сроку оплаты
@@ -76,11 +89,11 @@ func PaymentDueDate(delivery model.Date, deferralDays int, holidays []model.Holi
 // соответствовать несколько дат поставки; выбирается самая ранняя из них — та,
 // которую дала бы обычная поставка перед этим отрезком нерабочих дней. Для срока,
 // вручную поставленного на нерабочий день, возвращается due - отсрочка.
-func DeliveryDateForDueDate(due model.Date, deferralDays int, holidays []model.Holiday) model.Date {
+func DeliveryDateForDueDate(due model.Date, deferralDays int, settings model.Settings) model.Date {
 	candidate := due.AddDays(-deferralDays)
 	for {
 		previous := candidate.AddDays(-1)
-		if PaymentDueDate(previous, deferralDays, holidays) != due {
+		if PaymentDueDate(previous, deferralDays, settings) != due {
 			return candidate
 		}
 		candidate = previous

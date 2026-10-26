@@ -72,7 +72,7 @@ func TestDecodeMigratesV3DropsUNPs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("миграция v3: %v", err)
 	}
-	if db.Version != model.SchemaVersion || len(db.Buyers) != 1 || db.Settings.Holidays == nil {
+	if db.Version != model.SchemaVersion || len(db.Buyers) != 1 || db.Settings.Holidays == nil || db.Settings.WorkingDays == nil {
 		t.Fatalf("после миграции v3: %+v", db)
 	}
 	raw, err := Encode(db)
