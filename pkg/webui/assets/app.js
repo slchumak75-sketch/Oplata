@@ -3,7 +3,8 @@
  * Оплаты — фронтенд GUI (чистый JS, без сборки).
  * Общается с Go-бэкендом через /api/* (см. docs/DATA_MODEL.md).
  * Суммы в API — целые копейки; здесь форматируются как "1 234,56".
- * Роутинг на hash: #/dashboard #/matrix #/suppliers #/supplier/<id> #/operations #/data
+ * Роутинг на hash: #/dashboard #/suppliers #/supplier/<id> #/buyers #/operations #/data
+ * (#/matrix оставлен только как совместимый alias поставщиков).
  */
 
 const MONTHS_RU = ['', 'январь', 'февраль', 'март', 'апрель', 'май', 'июнь',
@@ -12,8 +13,8 @@ const STATUS_RU = {paid: 'Оплачено', partial: 'Частично', overdu
 
 const state = {
   token: '', today: '', settings: {}, suppliers: null, buyers: null,
-  dashboardDate: '', matrixAnchor: '', // понедельник отображаемой недели «Таблицы» (ISOString)
-  matrixSupplierId: '', // поставщик, выбранный в «Таблице» для панели поставки
+  dashboardDate: '', matrixAnchor: '', // понедельник недели таблиц поставщиков/покупателей (ISOString)
+  matrixSupplierId: '', // последний выбранный поставщик (подсветка и всплывающая поставка)
   matrixDeliveryDraft: {supplier_id: '', date: '', amount: ''},
   opsFilters: {supplier_id: '', kind: 'all', from: '', to: '', q: ''},
   includeArchived: false,
@@ -169,7 +170,7 @@ async function boot() {
     state.today = bootData.today;
     state.settings = bootData.settings || {};
     state.dashboardDate = state.today;
-    state.matrixAnchor = mondayOfISO(state.today); // «Таблица» открывается на текущей неделе
+    state.matrixAnchor = mondayOfISO(state.today); // таблицы открываются на текущей неделе
     $('#companyName').textContent = state.settings.company_name || '';
     document.title = 'Оплаты — ' + (state.settings.company_name || '');
     $('#footerInfo').textContent = 'Версия ' + bootData.version + ' · Файл данных: ' + bootData.data_file +
@@ -204,13 +205,13 @@ function route() {
   const parts = hash.replace(/^#\//, '').split('/');
   const name = parts[0] || 'dashboard';
   document.querySelectorAll('#mainTabs a').forEach((a) => {
-    a.classList.toggle('active', a.dataset.tab === name || (name === 'supplier' && a.dataset.tab === 'suppliers'));
+    a.classList.toggle('active', a.dataset.tab === name ||
+      ((name === 'supplier' || name === 'matrix') && a.dataset.tab === 'suppliers'));
   });
   const view = $('#view');
   const run = async () => {
     if (name === 'dashboard') await renderDashboard(view);
-    else if (name === 'matrix') await renderMatrix(view);
-    else if (name === 'suppliers') await renderSuppliers(view);
+    else if (name === 'suppliers' || name === 'matrix') await renderMatrix(view);
     else if (name === 'supplier') await renderSupplierCard(view, decodeURIComponent(parts[1] || ''));
     else if (name === 'buyers') await renderBuyers(view);
     else if (name === 'operations') await renderOperations(view);
@@ -275,15 +276,15 @@ function bindRowButtons(root) {
   root.querySelectorAll('[data-pay-open]').forEach((b) => { b.onclick = () => paymentForm({supplierId: b.dataset.payOpen, amountCents: parseInt(b.dataset.amount, 10)}); });
 }
 
-/* ---------- Таблица: одна неделя (понедельник–воскресенье) и панель поставки ---------- */
+/* ---------- «Поставщики» и «Покупатели»: одна неделя на всю ширину ---------- */
 /*
- * По требованию владельца вкладка показывает ровно 7 дней одной недели вокруг
- * state.matrixAnchor (понедельник). Кнопки влево/вправо сразу перескакивают на
- * предыдущую/следующую неделю и перечитывают /api/matrix только за эти 7 дней.
- * Верхняя полоса над датами — месяц и год. Справа — панель поставки выбранного
- * поставщика. Нерабочие дни — субботы/воскресенья и праздники, введённые вручную
- * на «Данные»; сервер помечает их is_day_off. GUI использует отметку только в
- * шапке дат, а поля с суммами не закрашивает.
+ * По требованию владельца вкладка «Поставщики» (бывшая «Таблица») показывает ровно
+ * 7 дней одной недели вокруг state.matrixAnchor (понедельник). «Покупатели»
+ * используют ту же недельную сетку и шапку. Таблицы занимают всю доступную ширину
+ * экрана: CSS задаёт fixed-раскладку колонок и запрещает горизонтальную прокрутку.
+ * Панель поставки больше не занимает место справа — она всплывает по клику на
+ * наименование поставщика. Нерабочие дни — субботы/воскресенья и праздники,
+ * введённые вручную на «Данные»; GUI отмечает их только в шапке дат.
  */
 const WEEKDAYS_SHORT = ['', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб', 'вс'];
 let deliveryPreviewSeq = 0; // защита от гонок при предпросмотре срока оплаты
@@ -310,6 +311,81 @@ async function fetchWorkingDue(rawDue) {
   };
 }
 
+function weekDayHeaderClass(d, first) {
+  return (d.is_day_off ? ' dayoff' : '') + (first && d.weekday === 1 ? ' week-start' : '') +
+    (d.date === state.today ? ' today' : '');
+}
+function weekDataDayClass(d, first) {
+  // Поля с суммами не закрашиваем: оставляем только границу начала недели.
+  return first && d.weekday === 1 ? ' week-start' : '';
+}
+function weekMatrixColgroup() {
+  return '<colgroup><col class="col-entity"><col class="col-side"><col class="col-side">' +
+    '<col class="col-day">'.repeat(21) + '</colgroup>';
+}
+function weekMatrixHead(days, entityLabel) {
+  let monthHeaders = '';
+  for (let i = 0; i < days.length;) {
+    const d0 = days[i];
+    let n = 0;
+    while (i + n < days.length && days[i + n].month === d0.month && days[i + n].year === d0.year) n++;
+    const leftCols = monthHeaders === '' ? 3 : 0;
+    monthHeaders += '<th colspan="' + (n * 3 + leftCols) + '" class="month-seg">' +
+      capitalizeMonth(MONTHS_RU[d0.month]) + ' ' + d0.year + '</th>';
+    i += n;
+  }
+  const dayHeaders = days.map((d) => {
+    const tip = d.holiday_name ? ' title="' + esc(d.holiday_name) + '"' : '';
+    return '<th colspan="3" class="day-head' + weekDayHeaderClass(d, true) + '"' + tip + '>' +
+      d.day + ' ' + WEEKDAYS_SHORT[d.weekday] + '</th>';
+  }).join('');
+  const kindHeaders = days.map((d) =>
+    '<th class="' + weekDayHeaderClass(d, true) + '">Приход</th>' +
+    '<th class="' + weekDayHeaderClass(d, false) + '">Долг</th>' +
+    '<th class="' + weekDayHeaderClass(d, false) + '">Оплата</th>').join('');
+  return '<thead><tr class="months">' + monthHeaders + '</tr>' +
+    '<tr class="days"><th class="sticky-1">' + esc(entityLabel) + '</th>' +
+    '<th class="sticky-2">ПРОСРОЧЕНО</th><th class="sticky-3">ЗАДОЛЖ.</th>' + dayHeaders + '</tr>' +
+    '<tr class="kinds"><th class="sticky-1"></th><th class="sticky-2">на сегодня</th>' +
+    '<th class="sticky-3">за неделю</th>' + kindHeaders + '</tr></thead>';
+}
+function weekToolbarHtml(anchor, summaryHtml) {
+  const from = anchor;
+  const to = addDaysISO(anchor, 6);
+  return '<div class="toolbar matrix-toolbar">' +
+    '<button class="btn" id="weekBack" title="Предыдущая неделя">← Неделя</button>' +
+    '<strong class="week-title">Неделя: ' + fmtDate(from) + ' — ' + fmtDate(to) + '</strong>' +
+    '<button class="btn" id="weekFwd" title="Следующая неделя">Неделя →</button>' +
+    '<button class="btn" id="gotoToday">Сегодня</button>' +
+    '<label class="muted">Дата <input type="date" id="gotoDate" value="' + esc(anchor) + '"></label>' +
+    '<button class="btn" id="gotoBtn">Перейти</button>' +
+    '<span class="spacer"></span><span class="muted">' + summaryHtml + '</span></div>';
+}
+function bindWeekToolbar(view, anchor, rerender) {
+  $('#weekBack', view).onclick = () => rerender(addDaysISO(anchor, -7));
+  $('#weekFwd', view).onclick = () => rerender(addDaysISO(anchor, 7));
+  $('#gotoToday', view).onclick = () => rerender(mondayOfISO(state.today));
+  $('#gotoBtn', view).onclick = () => {
+    const v = $('#gotoDate', view).value;
+    if (v) rerender(mondayOfISO(v));
+  };
+}
+function localWeekDays(anchor) {
+  const holidays = {};
+  for (const h of state.settings.holidays || []) holidays[h.date] = h.name || 'Праздничный день';
+  const days = [];
+  for (let i = 0; i < 7; i++) {
+    const date = addDaysISO(anchor, i);
+    const p = date.split('-').map(Number);
+    days.push({
+      date, day: p[2], month: p[1], year: p[0], weekday: i + 1,
+      is_day_off: i >= 5 || Boolean(holidays[date]),
+      holiday_name: holidays[date] || '',
+    });
+  }
+  return days;
+}
+
 function deliveryPanelHtml(supplier) {
   if (!supplier) {
     return '<h3>Поставка</h3>' +
@@ -333,14 +409,15 @@ function deliveryPanelHtml(supplier) {
     '<span class="hint">Одна сумма уже с НДС в ' + cur + '; она попадёт в «Приход».</span></label>' +
     '<div class="delivery-due"><span>Срок оплаты</span><strong id="dDueDate">—</strong><small id="dDueNote"></small></div>' +
     '</div>' +
-    '<div class="delivery-actions"><button class="btn" id="dClear" type="button">Очистить</button>' +
+    '<div class="delivery-actions"><button class="btn" id="dClose" type="button">Закрыть</button>' +
+    '<button class="btn" id="dClear" type="button">Очистить</button>' +
     '<button class="btn btn-primary" id="dSave" type="button">Приход</button></div>' +
     '<p class="muted delivery-note">Срок оплаты = дата поставки + отсрочка; при предоплате или реализации отсрочка не применяется. Если дата выпадает на субботу, воскресенье ' +
     'или введённый вручную праздник, программа сдвигает её на ближайший следующий рабочий день. После сохранения таблица ' +
     'сама перейдёт на неделю срока оплаты.</p>';
 }
-function bindDeliveryPanel(view, supplier) {
-  const panel = $('#deliveryPanel', view);
+function bindDeliveryPanel(view, supplier, panelRoot) {
+  const panel = panelRoot || $('#deliveryPanel', view);
   if (!panel || !supplier) return;
   const dateEl = $('#dDeliveryDate', panel);
   const amountEl = $('#dAmount', panel);
@@ -389,6 +466,10 @@ function bindDeliveryPanel(view, supplier) {
   dateEl.addEventListener('change', () => update(true));
   amountEl.addEventListener('input', () => update(false));
   amountEl.addEventListener('change', () => update(false));
+  const closeBtn = $('#dClose', panel);
+  if (closeBtn) closeBtn.onclick = closeModal;
+  const cardLink = panel.querySelector('a[href^="#/supplier/"]');
+  if (cardLink) cardLink.addEventListener('click', closeModal);
   $('#dClear', panel).onclick = () => {
     amountEl.value = '';
     showError('');
@@ -413,6 +494,7 @@ function bindDeliveryPanel(view, supplier) {
       await loadSuppliersCached();
       state.matrixDeliveryDraft.amount = '';
       toast('Поставка добавлена в «Приход» на ' + fmtDate(created.due_date), 'ok');
+      closeModal();
       await renderMatrix(view, mondayOfISO(created.due_date));
     } catch (e) {
       showError(e.message);
@@ -420,6 +502,16 @@ function bindDeliveryPanel(view, supplier) {
     }
   };
   update(true);
+}
+
+function openDeliveryPopup(view, supplier) {
+  if (!supplier) return;
+  state.matrixSupplierId = supplier.id;
+  const modal = openModal('<div class="delivery-popup" id="deliveryPanel">' +
+    deliveryPanelHtml(supplier) + '</div>');
+  bindDeliveryPanel(view, supplier, modal);
+  const first = $('#dAmount', modal);
+  if (first) first.focus();
 }
 
 let matrixCellEditing = false;
@@ -476,7 +568,7 @@ async function saveMatrixCellValue(td, cents) {
   const supplierId = td.dataset.cellSup;
   const date = td.dataset.cellDate;
   const kind = td.dataset.cellKind;
-  state.matrixSupplierId = supplierId; // правая панель и выделенная строка синхронизируются с ячейкой
+  state.matrixSupplierId = supplierId; // выделенная строка синхронизируется с редактируемой ячейкой
   const data = await api('/api/operations?supplier_id=' + encodeURIComponent(supplierId) +
     '&kind=' + encodeURIComponent(kind) + '&from=' + date + '&to=' + date + '&limit=500');
   const ops = data.operations || [];
@@ -591,46 +683,20 @@ async function renderMatrix(view, targetMonday) {
   state.matrixAnchor = anchor;
   const from = anchor;
   const to = addDaysISO(anchor, 6); // ровно одна неделя: понедельник–воскресенье
-  view.innerHTML = '<div class="loading">Загрузка таблицы…</div>';
+  view.innerHTML = '<div class="loading">Загрузка поставщиков…</div>';
   const m = await api('/api/matrix?from=' + from + '&to=' + to + '&date=' + state.today);
-
-  // Верхняя полоса над датами — только месяц и год (без «Поставщик/Задолженность»).
-  // Первый сегмент дополнительно накрывает три левые колонки, поэтому полоса сплошная.
-  let monthHeaders = '';
-  for (let i = 0; i < m.days.length;) {
-    const d0 = m.days[i];
-    let n = 0;
-    while (i + n < m.days.length && m.days[i + n].month === d0.month && m.days[i + n].year === d0.year) n++;
-    const leftCols = monthHeaders === '' ? 3 : 0;
-    monthHeaders += '<th colspan="' + (n * 3 + leftCols) + '" class="month-seg">' +
-      capitalizeMonth(MONTHS_RU[d0.month]) + ' ' + d0.year + '</th>';
-    i += n;
-  }
-  const dayCls = (d, first) =>
-    (d.is_day_off ? ' dayoff' : '') + (first && d.weekday === 1 ? ' week-start' : '') +
-    (d.date === state.today ? ' today' : '');
-  // По требованию владельца поля с данными не закрашиваем: для ячеек сумм
-  // оставляем только границу начала недели, без dayoff/today фона.
-  const dataDayCls = (d, first) => (first && d.weekday === 1 ? ' week-start' : '');
-  const dayHeaders = m.days.map((d) => {
-    const tip = d.holiday_name ? ' title="' + esc(d.holiday_name) + '"' : '';
-    return '<th colspan="3" class="day-head' + dayCls(d, true) + '"' + tip + '>' +
-      d.day + ' ' + WEEKDAYS_SHORT[d.weekday] + '</th>';
-  }).join('');
-  const kindHeaders = m.days.map((d) =>
-    '<th class="' + dayCls(d, true) + '">Приход</th><th class="' + dayCls(d, false) + '">Долг</th><th class="' + dayCls(d, false) + '">Оплата</th>').join('');
   const totalCells = m.days.map((d, i) => {
     const t = m.day_totals[i];
-    return '<td class="num' + dataDayCls(d, true) + '">' + fmtMoneyShort(t.sobstv_cents) + '</td>' +
-      '<td class="num debt' + (t.debt_cents < 0 ? ' neg' : '') + dataDayCls(d, false) + '">' + fmtMoneyShort(t.debt_cents) + '</td>' +
-      '<td class="num vyplaty' + dataDayCls(d, false) + '">' + (t.vyplaty_cents ? (t.vyplaty_cents > 0 ? '−' : '') + fmtMoneyShort(t.vyplaty_cents) : '') + '</td>';
+    return '<td class="num' + weekDataDayClass(d, true) + '">' + fmtMoneyShort(t.sobstv_cents) + '</td>' +
+      '<td class="num debt' + (t.debt_cents < 0 ? ' neg' : '') + weekDataDayClass(d, false) + '">' + fmtMoneyShort(t.debt_cents) + '</td>' +
+      '<td class="num vyplaty' + weekDataDayClass(d, false) + '">' + (t.vyplaty_cents ? (t.vyplaty_cents > 0 ? '−' : '') + fmtMoneyShort(t.vyplaty_cents) : '') + '</td>';
   }).join('');
   const visibleRows = m.rows.filter((r) => state.includeArchived || !r.supplier.archived);
   const matrixSuppliers = {};
   visibleRows.forEach((r) => { matrixSuppliers[r.supplier.id] = r.supplier; });
-  const selectedSupplier = matrixSuppliers[state.matrixSupplierId] ||
-    (visibleRows.length ? visibleRows[0].supplier : null);
-  state.matrixSupplierId = selectedSupplier ? selectedSupplier.id : '';
+  if (state.matrixSupplierId && !matrixSuppliers[state.matrixSupplierId]) {
+    state.matrixSupplierId = '';
+  }
   const bodyRows = visibleRows.map((r) => {
     const byDate = {};
     for (const c of r.cells) byDate[c.date] = c;
@@ -640,9 +706,9 @@ async function renderMatrix(view, targetMonday) {
       runningDebt += (c.sobstv_cents || 0) - (c.vyplaty_cents || 0);
       const debt = Object.prototype.hasOwnProperty.call(c, 'debt_cents') ? c.debt_cents : runningDebt;
       const attr = ' data-cell-sup="' + esc(r.supplier.id) + '" data-cell-date="' + d.date + '"';
-      return '<td class="cell num' + dataDayCls(d, true) + '"' + attr + ' data-cell-kind="obligation" data-cell-cents="' + c.sobstv_cents + '" tabindex="0">' + fmtMoneyShort(c.sobstv_cents) + '</td>' +
-        '<td class="num debt' + (debt < 0 ? ' neg' : '') + dataDayCls(d, false) + '">' + fmtMoneyShort(debt) + '</td>' +
-        '<td class="cell num vyplaty' + dataDayCls(d, false) + '"' + attr + ' data-cell-kind="payment" data-cell-cents="' + c.vyplaty_cents + '" tabindex="0">' + (c.vyplaty_cents ? (c.vyplaty_cents > 0 ? '−' : '') + fmtMoneyShort(c.vyplaty_cents) : '') + '</td>';
+      return '<td class="cell num' + weekDataDayClass(d, true) + '"' + attr + ' data-cell-kind="obligation" data-cell-cents="' + c.sobstv_cents + '" tabindex="0">' + fmtMoneyShort(c.sobstv_cents) + '</td>' +
+        '<td class="num debt' + (debt < 0 ? ' neg' : '') + weekDataDayClass(d, false) + '">' + fmtMoneyShort(debt) + '</td>' +
+        '<td class="cell num vyplaty' + weekDataDayClass(d, false) + '"' + attr + ' data-cell-kind="payment" data-cell-cents="' + c.vyplaty_cents + '" tabindex="0">' + (c.vyplaty_cents ? (c.vyplaty_cents > 0 ? '−' : '') + fmtMoneyShort(c.vyplaty_cents) : '') + '</td>';
     }).join('');
     return '<tr' + (r.supplier.id === state.matrixSupplierId ? ' class="selected-supplier"' : '') + '>' +
       '<td class="sticky-1"><button type="button" class="supplier-link" data-delivery-sup="' + esc(r.supplier.id) + '" title="Ввести поставку поставщика">' + esc(r.supplier.name) + '</button></td>' +
@@ -650,21 +716,11 @@ async function renderMatrix(view, targetMonday) {
       '<td class="sticky-3 num' + (r.range_balance_cents < 0 ? ' neg' : '') + '" title="Задолженность за всё время: ' + esc(fmtMoney(r.balance_cents)) + '">' + fmtMoneyShort(r.range_balance_cents) + '</td>' + cells + '</tr>';
   }).join('');
   view.innerHTML =
-    '<div class="toolbar matrix-toolbar">' +
-    '<button class="btn" id="weekBack" title="Предыдущая неделя">← Неделя</button>' +
-    '<strong class="week-title">Неделя: ' + fmtDate(from) + ' — ' + fmtDate(to) + '</strong>' +
-    '<button class="btn" id="weekFwd" title="Следующая неделя">Неделя →</button>' +
-    '<button class="btn" id="gotoToday">Сегодня</button>' +
-    '<label class="muted">Дата <input type="date" id="gotoDate" value="' + esc(anchor) + '"></label>' +
-    '<button class="btn" id="gotoBtn">Перейти</button>' +
-    '<span class="spacer"></span><span class="muted">Задолженность за неделю: <strong>' + fmtMoney(m.grand_range_cents) +
-    ' ' + esc(state.settings.currency_label || '') + '</strong> · поставщик — поставка справа · ячейка — изменить сумму</span></div>' +
-    '<div class="matrix-layout"><div class="matrix-main">' +
-    '<div class="matrix-wrap week" id="matrixWrap"><table class="matrix week"><thead>' +
-    '<tr class="months">' + monthHeaders + '</tr>' +
-    '<tr class="days"><th class="sticky-1">ПОСТАВЩИК</th><th class="sticky-2">ПРОСРОЧЕНО</th><th class="sticky-3">ЗАДОЛЖ.</th>' + dayHeaders + '</tr>' +
-    '<tr class="kinds"><th class="sticky-1"></th><th class="sticky-2">на сегодня</th><th class="sticky-3">за неделю</th>' + kindHeaders + '</tr>' +
-    '</thead><tbody>' +
+    weekToolbarHtml(anchor, 'Задолженность за неделю: <strong>' + fmtMoney(m.grand_range_cents) +
+      ' ' + esc(state.settings.currency_label || '') +
+      '</strong> · наименование — всплывающая поставка · ячейка — изменить сумму') +
+    '<div class="matrix-wrap week" id="matrixWrap"><table class="matrix week">' +
+    weekMatrixColgroup() + weekMatrixHead(m.days, 'ПОСТАВЩИК') + '<tbody>' +
     '<tr class="total"><td class="sticky-1">ВСЕГО</td><td class="sticky-2 num' + (m.grand_overdue_cents > 0 ? ' overdue' : '') + '">' + fmtMoneyShort(m.grand_overdue_cents) + '</td><td class="sticky-3 num">' + fmtMoneyShort(m.grand_range_cents) + '</td>' + totalCells + '</tr>' +
     bodyRows + '</tbody></table></div>' +
     '<p class="muted">Показана одна неделя — с понедельника по воскресенье. Кнопки «← Неделя» и «Неделя →» ' +
@@ -673,97 +729,64 @@ async function renderMatrix(view, targetMonday) {
     'Слева от «за неделю» показано просрочено на сегодня. Дата вверху — срок оплаты с учётом эффективной отсрочки; для нового прихода из ячейки дата поставки в карточке рассчитывается от срока по отсрочке. ' +
     '«Приход» — к оплате, «Долг» — баланс поставщика после операций дня, «Оплата» показана с минусом. ' +
     'Клик по ячейке редактирует сумму прямо в таблице: Enter — сохранить, Esc — отмена, пустое значение — очистить. ' +
-    'Если за день было несколько операций — в ячейке их сумма.</p></div>' +
-    '<aside class="delivery-panel" id="deliveryPanel">' + deliveryPanelHtml(selectedSupplier) + '</aside></div>';
+    'Если за день было несколько операций — в ячейке их сумма. Клик по наименованию поставщика открывает всплывающую форму «Поставка».</p>';
 
   bindMatrixCellEditors(view, anchor);
 
-  bindDeliveryPanel(view, selectedSupplier);
   view.querySelectorAll('[data-delivery-sup]').forEach((btn) => {
     btn.onclick = () => {
       const supplier = matrixSuppliers[btn.dataset.deliverySup] || supplierById(btn.dataset.deliverySup);
       if (!supplier) return;
-      state.matrixSupplierId = supplier.id;
       view.querySelectorAll('table.matrix tr.selected-supplier').forEach((tr) => tr.classList.remove('selected-supplier'));
       const row = btn.closest('tr');
       if (row) row.classList.add('selected-supplier');
-      const panel = $('#deliveryPanel', view);
-      panel.innerHTML = deliveryPanelHtml(supplier);
-      bindDeliveryPanel(view, supplier);
-      const first = $('#dAmount', panel);
-      if (first) first.focus();
+      openDeliveryPopup(view, supplier);
     };
   });
 
-  // Скачкообразная навигация: каждая кнопка сразу показывает соседнюю неделю.
-  $('#weekBack').onclick = () => renderMatrix(view, addDaysISO(anchor, -7));
-  $('#weekFwd').onclick = () => renderMatrix(view, addDaysISO(anchor, 7));
-  $('#gotoToday').onclick = () => renderMatrix(view, mondayOfISO(state.today));
-  $('#gotoBtn').onclick = () => { const v = $('#gotoDate').value; if (v) renderMatrix(view, mondayOfISO(v)); };
+  bindWeekToolbar(view, anchor, (nextMonday) => renderMatrix(view, nextMonday));
 }
 
-/* ---------- Поставщики ---------- */
-async function renderSuppliers(view) {
-  view.innerHTML = '<div class="loading">Загрузка поставщиков…</div>';
-  await loadSuppliersCached();
-  const rows = state.suppliers
-    .filter((s) => state.includeArchived || !s.supplier.archived)
-    .map((s) => '<tr><td><a href="#/supplier/' + encodeURIComponent(s.supplier.id) + '">' + esc(s.supplier.name) + '</a>' +
-      (s.supplier.archived ? ' <span class="badge pending">архив</span>' : '') + '</td>' +
-      '<td class="num">' + fmtMoney(s.balance_cents) + '</td>' +
-      '<td class="num' + (s.overdue_cents > 0 ? ' overdue' : '') + '">' + (s.overdue_cents ? fmtMoney(s.overdue_cents) : '—') + '</td>' +
-      '<td class="center">' + esc(supplierTermsText(s.supplier)) + '</td>' +
-      '<td>' + esc(s.supplier.note || '') + '</td></tr>').join('');
-  view.innerHTML =
-    '<div class="toolbar"><button class="btn btn-primary" id="btnNewSupplier">＋ Добавить поставщика</button>' +
-    '<button class="btn" id="btnSupplierCardList">🏭 Карточка поставщика</button>' +
-    '<label><input type="checkbox" id="chkArchived2"' + (state.includeArchived ? ' checked' : '') + '> показывать архивных</label></div>' +
-    '<div class="panel"><h3>Поставщики (' + state.suppliers.length + ')</h3><div class="table-wrap"><table class="data">' +
-    '<thead><tr><th>Наименование поставщика</th><th class="num">Задолженность</th><th class="num">Просрочено</th><th>Условия оплаты</th><th>Примечание</th></tr></thead>' +
-    '<tbody>' + rows + '</tbody></table></div></div>';
-  $('#btnNewSupplier').onclick = () => supplierForm(null);
-  $('#btnSupplierCardList').onclick = () => supplierCardModal();
-  $('#chkArchived2').onchange = (e) => { state.includeArchived = e.target.checked; renderSuppliers(view); };
-}
-
-/* ---------- Покупатели (справочник) ---------- */
-async function renderBuyers(view) {
+/* ---------- «Покупатели»: та же очищенная недельная таблица ---------- */
+async function renderBuyers(view, targetMonday) {
+  const anchor = mondayOfISO(targetMonday || state.matrixAnchor || state.today);
+  state.matrixAnchor = anchor;
   view.innerHTML = '<div class="loading">Загрузка покупателей…</div>';
   await loadBuyersCached();
-  const query = (state.buyersQuery || '').toLowerCase();
-  const rows = (state.buyers || [])
-    .filter((b) => !query || (b.name + ' ' + (b.note || '')).toLowerCase().includes(query))
-    .map((b) => '<tr><td>' + esc(b.name) + '</td><td>' + esc(b.note || '') + '</td>' +
-      '<td class="nowrap"><button class="btn btn-small" data-edit-buyer="' + esc(b.id) + '">Изм.</button> ' +
-      '<button class="btn btn-small btn-danger" data-del-buyer="' + esc(b.id) + '">Удалить покупателя</button></td></tr>').join('');
+
+  const days = localWeekDays(anchor);
+  const blankCells = days.map((d) =>
+    '<td class="num' + weekDataDayClass(d, true) + '"></td>' +
+    '<td class="num debt' + weekDataDayClass(d, false) + '"></td>' +
+    '<td class="num vyplaty' + weekDataDayClass(d, false) + '"></td>').join('');
+  const buyers = state.buyers || [];
+  const bodyRows = buyers.map((b) => {
+    const note = b.note ? ' · ' + b.note : '';
+    return '<tr><td class="sticky-1"><button type="button" class="supplier-link buyer-link" ' +
+      'data-buyer-card="' + esc(b.id) + '" title="Карточка покупателя' + esc(note) + '">' +
+      esc(b.name) + '</button></td>' +
+      '<td class="sticky-2 num"></td><td class="sticky-3 num"></td>' + blankCells + '</tr>';
+  }).join('');
+  const emptyRow = buyers.length ? '' :
+    '<tr><td colspan="24" class="muted">Покупателей пока нет. Добавьте первого через кнопку «Карточка покупателя» в шапке.</td></tr>';
+
   view.innerHTML =
-    '<div class="toolbar"><button class="btn btn-primary" id="btnNewBuyer">＋ Добавить покупателя</button>' +
-    '<button class="btn" id="btnBuyerCardList">🛒 Карточка покупателя</button>' +
-    '<input type="text" id="buyerSearch" placeholder="Поиск по наименованию" value="' + esc(state.buyersQuery || '') + '" style="min-width:260px"></div>' +
-    '<div class="panel"><h3>Покупатели (' + (state.buyers || []).length + ')</h3><div class="table-wrap"><table class="data">' +
-    '<thead><tr><th>Наименование покупателя</th><th>Примечание</th><th></th></tr></thead>' +
-    '<tbody>' + (rows || '<tr><td colspan="3" class="muted">Покупателей пока нет. Добавьте первого кнопкой выше.</td></tr>') + '</tbody></table></div>' +
-    '<p class="muted">Справочник контрагентов: хранятся наименование и примечание. Операции с покупателями программа пока не ведёт.</p></div>';
-  $('#btnNewBuyer').onclick = () => buyerForm(null);
-  $('#btnBuyerCardList').onclick = () => buyerCardModal();
-  let searchTimer = null;
-  $('#buyerSearch').oninput = (e) => {
-    clearTimeout(searchTimer);
-    searchTimer = setTimeout(() => { state.buyersQuery = e.target.value.trim(); renderBuyers(view); }, 300);
-  };
-  view.querySelectorAll('[data-edit-buyer]').forEach((b) => { b.onclick = () => buyerForm(buyerById(b.dataset.editBuyer)); });
-  view.querySelectorAll('[data-del-buyer]').forEach((b) => {
-    b.onclick = async () => {
-      const buy = buyerById(b.dataset.delBuyer);
-      if (!await confirmDialog('Удаление покупателя', 'Удалить покупателя «' + (buy ? buy.name : '') + '»?')) return;
-      try {
-        await api('/api/buyers/' + encodeURIComponent(b.dataset.delBuyer), {method: 'DELETE'});
-        toast('Покупатель удалён', 'ok');
-        await loadBuyersCached();
-        renderBuyers(view);
-      } catch (e) { toast(e.message, 'error'); }
-    };
+    weekToolbarHtml(anchor, 'Покупателей: <strong>' + buyers.length +
+      '</strong> · наименование — карточка покупателя') +
+    '<div class="matrix-wrap week" id="matrixWrap"><table class="matrix week">' +
+    weekMatrixColgroup() + weekMatrixHead(days, 'ПОКУПАТЕЛЬ') + '<tbody>' +
+    '<tr class="total"><td class="sticky-1">ВСЕГО</td>' +
+    '<td class="sticky-2 num"></td><td class="sticky-3 num"></td>' + blankCells + '</tr>' +
+    bodyRows + emptyRow + '</tbody></table></div>' +
+    '<p class="muted">Вкладка очищена и приведена к той же недельной сетке, что и «Поставщики»: ' +
+    'понедельник–воскресенье, «Просрочено», задолженность за неделю и «Приход · Долг · Оплата» на каждый день. ' +
+    'Покупатели добавляются, изменяются и удаляются через кнопку «Карточка покупателя» в шапке. ' +
+    'Суммы операций покупателей в текущей модели данных пока не хранятся, поэтому ячейки пустые.</p>';
+
+  view.querySelectorAll('[data-buyer-card]').forEach((btn) => {
+    btn.onclick = () => buyerCardModal(btn.dataset.buyerCard);
   });
+  bindWeekToolbar(view, anchor, (nextMonday) => renderBuyers(view, nextMonday));
 }
 
 /* ---------- Карточка поставщика ---------- */
@@ -852,7 +875,7 @@ async function renderOperations(view) {
     '<div class="panel"><h3>Журнал операций</h3><div class="table-wrap"><table class="data">' +
     '<thead><tr><th>Тип</th><th>Поставщик</th><th>Дата</th><th class="num">Сумма</th><th>Документ</th><th>Комментарий</th></tr></thead>' +
     '<tbody>' + (rows || '<tr><td colspan="6" class="muted">Ничего не найдено.</td></tr>') + '</tbody></table></div>' +
-    '<p class="muted">Дата прихода — срок оплаты (с учётом отсрочки). Суммы добавляются и изменяются прямо в ячейках вкладки «Таблица»; поставка — через постоянную панель справа.</p></div>';
+    '<p class="muted">Дата прихода — срок оплаты (с учётом отсрочки). Суммы добавляются и изменяются прямо в ячейках вкладки «Поставщики»; поставка — через всплывающую форму по клику на поставщика.</p></div>';
   const apply = () => {
     state.opsFilters = {
       supplier_id: $('#fSupplier').value, kind: $('#fKind').value,
@@ -1174,10 +1197,11 @@ async function supplierCardModal() {
 
 // buyerCardModal — окно «Карточка покупателя» из синей шапки:
 // выбор покупателя, наименование/примечание, кнопки Добавить/Удалить/Сохранить.
-async function buyerCardModal() {
+async function buyerCardModal(selectedId) {
   if (!state.buyers) await loadBuyersCached();
   const list = state.buyers || [];
-  const options = list.map((b) => '<option value="' + esc(b.id) + '">' + esc(b.name) + '</option>').join('');
+  const options = list.map((b) => '<option value="' + esc(b.id) + '"' +
+    (b.id === selectedId ? ' selected' : '') + '>' + esc(b.name) + '</option>').join('');
   const modal = openModal('<h3>🛒 Карточка покупателя</h3><div class="form-grid">' +
     '<label class="field full">Покупатель <select id="bcSelect">' + options + '</select>' +
     (list.length ? '' : '<span class="hint">Покупателей пока нет — добавьте первого кнопкой ниже.</span>') + '</label>' +
