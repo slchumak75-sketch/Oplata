@@ -32,7 +32,7 @@ func TestOpenCreatesEmptyDB(t *testing.T) {
 	}
 }
 
-// TestDecodeMigratesV1: файл формата v1 (без buyers) открывается как v4.
+// TestDecodeMigratesV1: файл формата v1 (без buyers) открывается как текущая версия.
 func TestDecodeMigratesV1(t *testing.T) {
 	v1 := []byte(`{"version":1,"settings":{"company_name":"Тест","currency_label":"руб.","warn_days":3},
 		"suppliers":[{"id":"s1","name":"АВИДО","deferral_days":0,"note":"","archived":false}],
@@ -60,9 +60,9 @@ func TestDecodeMigratesV2(t *testing.T) {
 	}
 }
 
-// TestDecodeMigratesV3DropsSupplierUNP: v4 удаляет УНП только у поставщиков;
-// УНП покупателей должен сохраниться.
-func TestDecodeMigratesV3DropsSupplierUNP(t *testing.T) {
+// TestDecodeMigratesV3DropsUNPs: текущая схема не хранит УНП ни поставщика,
+// ни покупателя; старые значения при миграции должны исчезнуть из JSON.
+func TestDecodeMigratesV3DropsUNPs(t *testing.T) {
 	v3 := []byte(`{"version":3,"settings":{"company_name":"Тест","currency_label":"руб.","warn_days":3},
 		"suppliers":[{"id":"s1","name":"АВИДО","unp":"111111111","deferral_days":14,"note":"","archived":false}],
 		"obligations":[],"payments":[],
@@ -72,15 +72,15 @@ func TestDecodeMigratesV3DropsSupplierUNP(t *testing.T) {
 	if err != nil {
 		t.Fatalf("миграция v3: %v", err)
 	}
-	if db.Version != model.SchemaVersion || db.Buyers[0].UNP != "222222222" {
+	if db.Version != model.SchemaVersion || len(db.Buyers) != 1 || db.Settings.Holidays == nil {
 		t.Fatalf("после миграции v3: %+v", db)
 	}
 	raw, err := Encode(db)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(raw), "111111111") || !strings.Contains(string(raw), "222222222") {
-		t.Fatalf("v4 JSON должен отбросить УНП поставщика и сохранить УНП покупателя: %s", raw)
+	if strings.Contains(string(raw), "111111111") || strings.Contains(string(raw), "222222222") || strings.Contains(string(raw), "\"unp\"") {
+		t.Fatalf("текущий JSON не должен содержать УНП поставщика или покупателя: %s", raw)
 	}
 }
 

@@ -98,8 +98,13 @@ func TestTokenGuardAndCRUD(t *testing.T) {
 	if totals[14].(map[string]any)["sobstv_cents"].(float64) != 10000 {
 		t.Fatalf("matrix totals[14]: %v", totals[14])
 	}
-	// Матрица по диапазону (неделя пн–вс) с календарём РБ: 06.01.2025 — понедельник.
-	code, week := env.req(t, "GET", "/api/matrix?from=2025-01-06&to=2025-01-12", "", false)
+	// Праздники больше не берутся из законодательства: 06–07.01 вводим вручную
+	// через тот же API, который использует вкладка «Данные».
+	if code, _ := env.req(t, "PUT", "/api/settings", `{"holidays":[{"date":"2025-01-07","name":"Ручной праздник"},{"date":"2025-01-06","name":"Ручной нерабочий день"}]}`, true); code != 200 {
+		t.Fatalf("сохранение ручных праздников: код %d", code)
+	}
+	// Матрица по диапазону (неделя пн–вс) с ручным календарём: 06.01.2025 — понедельник.
+	code, week := env.req(t, "GET", "/api/matrix?from=2025-01-06&to=2025-01-12&date=2025-02-01", "", false)
 	if code != 200 {
 		t.Fatalf("matrix range: код %d", code)
 	}
@@ -112,8 +117,11 @@ func TestTokenGuardAndCRUD(t *testing.T) {
 		t.Fatalf("matrix range day0: %v", d0)
 	}
 	d1 := days[1].(map[string]any)
-	if d1["is_holiday"] != true || d1["holiday_name"] == "" {
-		t.Fatalf("matrix range Рождество: %v", d1)
+	if d1["is_holiday"] != true || d1["holiday_name"] != "Ручной праздник" {
+		t.Fatalf("matrix range ручной праздник: %v", d1)
+	}
+	if week["grand_overdue_cents"].(float64) != 6000 {
+		t.Fatalf("matrix overdue на 01.02.2025: %v", week)
 	}
 	if code, _ := env.req(t, "GET", "/api/matrix?from=2025-01-12&to=2025-01-06", "", false); code != 400 {
 		t.Fatalf("matrix reversed range: код %d", code)
@@ -126,9 +134,12 @@ func TestTokenGuardAndCRUD(t *testing.T) {
 
 func TestDeliveryVATAndWorkingDueDate(t *testing.T) {
 	env := newTestEnv(t) // у s1 отсрочка 14 дней
+	if code, _ := env.req(t, "PUT", "/api/settings", `{"holidays":[{"date":"2025-01-06","name":"Ручной нерабочий день"},{"date":"2025-01-07","name":"Ручной праздник"}]}`, true); code != 200 {
+		t.Fatalf("сохранение ручных праздников: код %d", code)
+	}
 	// Панель поставки: 100,00 без НДС + 20,00 НДС. Поставка 21.12.2024 + 14 дней
 	// = суббота 04.01.2025, поэтому срок сдвигается на среду 08.01.2025
-	// (05.01 вс, 06.01 переведённый выходной, 07.01 православное Рождество).
+	// (05.01 вс, 06–07.01 вручную введённые нерабочие дни).
 	code, out := env.req(t, "POST", "/api/obligations",
 		`{"supplier_id":"s1","delivery_date":"2024-12-21","amount_excl_vat_cents":10000,"vat_cents":2000}`, true)
 	if code != http.StatusCreated || out["due_date"] != "2025-01-08" || out["amount_cents"].(float64) != 12000 {
@@ -234,6 +245,29 @@ func TestImportExportRoundTripViaAPI(t *testing.T) {
 	}
 }
 
+func TestSupplierPaymentModesDisableDeferral(t *testing.T) {
+	env := newTestEnv(t)
+	code, created := env.req(t, "POST", "/api/suppliers", `{"name":"Предоплата ООО","deferral_days":30,"prepayment":true}`, true)
+	if code != http.StatusCreated || created["prepayment"] != true {
+		t.Fatalf("создание поставщика с предоплатой: код=%d ответ=%v", code, created)
+	}
+	supID, _ := created["id"].(string)
+	// 02.01.2025 — четверг. Несмотря на сохранённую и явно переданную отсрочку 30 дней,
+	// при предоплате режим отсрочки неактивен: срок равен дате поставки.
+	code, obl := env.req(t, "POST", "/api/obligations", `{"supplier_id":"`+supID+`","delivery_date":"2025-01-02","deferral_days":30,"amount_cents":10000}`, true)
+	if code != http.StatusCreated || obl["due_date"] != "2025-01-02" {
+		t.Fatalf("срок при предоплате: код=%d ответ=%v", code, obl)
+	}
+	// 10.01.2025 — пятница. При ручном вводе из ячейки отсрочка также равна нулю.
+	code, manual := env.req(t, "POST", "/api/obligations", `{"supplier_id":"`+supID+`","due_date":"2025-01-10","amount_cents":5000,"infer_delivery_date":true}`, true)
+	if code != http.StatusCreated || manual["delivery_date"] != "2025-01-10" {
+		t.Fatalf("поставка при предоплате: код=%d ответ=%v", code, manual)
+	}
+	if code, _ := env.req(t, "POST", "/api/suppliers", `{"name":"Сразу оба режима","prepayment":true,"on_realization":true}`, true); code != http.StatusBadRequest {
+		t.Fatalf("одновременная предоплата+реализация: код %d", code)
+	}
+}
+
 func TestBuyersAndSupplierWithoutUNP(t *testing.T) {
 	env := newTestEnv(t)
 	// У поставщиков УНП больше нет: старое поле запроса игнорируется и в ответ не попадает.
@@ -244,10 +278,11 @@ func TestBuyersAndSupplierWithoutUNP(t *testing.T) {
 	if code, _ := env.req(t, "POST", "/api/suppliers", `{"name":"Другой","unp":"123456789"}`, true); code != http.StatusCreated {
 		t.Fatalf("второй поставщик с игнорируемым старым unp: код %d", code)
 	}
-	// Покупатели: создать, найти поиском, изменить, удалить.
+	// Покупатели: УНП больше нет, старое поле запроса игнорируется.
+	// Создать, найти поиском по примечанию, изменить, удалить.
 	code, buy := env.req(t, "POST", "/api/buyers", `{"name":"СтройДом","unp":"987654321","note":"опт"}`, true)
-	if code != http.StatusCreated {
-		t.Fatalf("создание покупателя: код=%d ответ=%v", code, buy)
+	if _, hasUNP := buy["unp"]; code != http.StatusCreated || hasUNP {
+		t.Fatalf("создание покупателя без УНП: код=%d ответ=%v", code, buy)
 	}
 	buyID, _ := buy["id"].(string)
 	if code, _ := env.req(t, "POST", "/api/buyers", `{"name":"СтройДом"}`, true); code != http.StatusBadRequest {
@@ -255,14 +290,18 @@ func TestBuyersAndSupplierWithoutUNP(t *testing.T) {
 	}
 	code, list := env.req(t, "GET", "/api/buyers?q=987", "", false)
 	buyers, _ := list["buyers"].([]any)
+	if code != 200 || len(buyers) != 0 {
+		t.Fatalf("поиск по старому УНП не должен находить покупателя: код=%d ответ=%v", code, list)
+	}
+	code, list = env.req(t, "GET", "/api/buyers?q=%D0%BE%D0%BF%D1%82", "", false)
+	buyers, _ = list["buyers"].([]any)
 	if code != 200 || len(buyers) != 1 {
-		t.Fatalf("поиск покупателей: код=%d ответ=%v", code, list)
+		t.Fatalf("поиск покупателей по примечанию: код=%d ответ=%v", code, list)
 	}
-	if code, upd := env.req(t, "PUT", "/api/buyers/"+buyID, `{"name":"СтройДом ООО","unp":"987654321"}`, true); code != 200 || upd["name"] != "СтройДом ООО" {
-		t.Fatalf("обновление покупателя: код=%d ответ=%v", code, upd)
-	}
-	if code, _ := env.req(t, "PUT", "/api/buyers/"+buyID, `{"name":"СтройДом ООО","unp":"123"}`, true); code != http.StatusBadRequest {
-		t.Fatalf("невалидный УНП покупателя: код %d", code)
+	if code, upd := env.req(t, "PUT", "/api/buyers/"+buyID, `{"name":"СтройДом ООО","unp":"123"}`, true); code != 200 || upd["name"] != "СтройДом ООО" {
+		t.Fatalf("обновление покупателя со старым полем unp: код=%d ответ=%v", code, upd)
+	} else if _, hasUNP := upd["unp"]; hasUNP {
+		t.Fatalf("ответ покупателя не должен содержать unp: %v", upd)
 	}
 	if code, _ := env.req(t, "DELETE", "/api/buyers/"+buyID, "", true); code != http.StatusNoContent {
 		t.Fatalf("удаление покупателя: код %d", code)

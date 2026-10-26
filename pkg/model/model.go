@@ -24,10 +24,13 @@ import (
 // При изменении формата: увеличить, добавить миграцию в pkg/store и запись в CHANGELOG.md.
 // v2: добавлены Supplier.UNP и справочник покупателей (Buyer).
 // v3: у начислений добавлена необязательная разбивка суммы поставки без НДС и НДС.
-// v4: Supplier.UNP удалён по решению владельца (у покупателей УНП сохранён);
-// старое поле suppliers[].unp при загрузке игнорируется и в v4 не записывается.
-// Файлы v1–v3 мигрируют в store.Decode.
-const SchemaVersion = 4
+// v4: Supplier.UNP удалён по решению владельца; старое поле suppliers[].unp
+// при загрузке игнорируется и больше не записывается.
+// v5: удалён Buyer.UNP (поле buyers[].unp игнорируется), у поставщика добавлены
+// взаимоисключающие режимы предоплаты/реализации, а в настройках — праздники,
+// вводимые вручную на вкладке «Данные».
+// Файлы v1–v4 мигрируют в store.Decode.
+const SchemaVersion = 5
 
 // Date — календарная дата в формате ISO yyyy-mm-dd. Сравнение строк == сравнение дат.
 type Date string
@@ -86,21 +89,37 @@ type Supplier struct {
 	// Name — название, как в Excel (столбец A). Уникальность контролирует store с нормализацией.
 	Name string `json:"name"`
 	// DeferralDays — отсрочка платежа в днях по умолчанию для этого поставщика.
-	// 0 = не задана (срок оплаты вводится вручную).
+	// 0 = не задана (срок оплаты вводится вручную). Значение сохраняется даже
+	// при включённой предоплате или реализации, но в расчётах не применяется.
 	DeferralDays int    `json:"deferral_days"`
 	Note         string `json:"note"`
+	// Prepayment и OnRealization — взаимоисключающие условия оплаты (схема v5).
+	// Если выбран любой из режимов, режим отсрочки неактивен: эффективная
+	// отсрочка равна нулю (EffectiveDeferralDays).
+	Prepayment    bool `json:"prepayment"`
+	OnRealization bool `json:"on_realization"`
 	// Archived — скрыт из основных списков, данные и история сохраняются.
 	Archived bool `json:"archived"`
 }
 
+// DeferralInactive сообщает, отключена ли отсрочка условиями оплаты поставщика.
+func (s Supplier) DeferralInactive() bool { return s.Prepayment || s.OnRealization }
+
+// EffectiveDeferralDays возвращает отсрочку, которую следует использовать в расчётах.
+func (s Supplier) EffectiveDeferralDays() int {
+	if s.DeferralInactive() {
+		return 0
+	}
+	return s.DeferralDays
+}
+
 // Buyer — покупатель (справочник «Карточка покупателя»). Операций с покупателями
-// приложение пока не ведёт — это адресная книга контрагентов: наименование и УНП.
+// приложение пока не ведёт — это адресная книга контрагентов: наименование и примечание.
+// УНП покупателя удалён в схеме v5 по решению владельца.
 type Buyer struct {
 	ID string `json:"id"`
 	// Name — наименование покупателя. Уникально с нормализацией, как у поставщиков.
 	Name string `json:"name"`
-	// UNP — учётный номер плательщика (9 символов), необязательно.
-	UNP  string `json:"unp"`
 	Note string `json:"note"`
 }
 
@@ -138,19 +157,29 @@ type Payment struct {
 	Comment     string `json:"comment"`
 }
 
+// Holiday — праздничный/нерабочий день, введённый вручную на вкладке «Данные»
+// (схема v5). Субботы и воскресенья календарь считает выходными автоматически,
+// а даты из законодательства приложение больше не подставляет само.
+type Holiday struct {
+	Date Date   `json:"date"`
+	Name string `json:"name"`
+}
+
 // Settings — настройки приложения, хранятся внутри файла данных.
 type Settings struct {
 	CompanyName   string `json:"company_name"`
 	CurrencyLabel string `json:"currency_label"`
 	// WarnDays — за сколько дней до срока подсвечивать «скоро срок».
 	WarnDays int `json:"warn_days"`
+	// Holidays — нерабочие праздничные дни, введённые вручную.
+	Holidays []Holiday `json:"holidays"`
 	// SeededFrom — устаревшая пометка стартовых данных из старых версий; в новых базах пусто.
 	SeededFrom string `json:"seeded_from,omitempty"`
 }
 
 // DefaultSettings возвращает настройки для новой пустой базы.
 func DefaultSettings() Settings {
-	return Settings{CompanyName: "Строймаркет", CurrencyLabel: "руб.", WarnDays: 3}
+	return Settings{CompanyName: "Строймаркет", CurrencyLabel: "руб.", WarnDays: 3, Holidays: []Holiday{}}
 }
 
 // DB — всё содержимое файла данных (JSON). Порядок срезов — порядок отображения:
@@ -201,35 +230,6 @@ func (db *DB) BuyerByID(id string) *Buyer {
 	return nil
 }
 
-// NormalizeUNP приводит УНП к каноническому виду для хранения и сравнения:
-// без пробелов, в верхнем регистре.
-func NormalizeUNP(s string) string {
-	return strings.ToUpper(strings.Join(strings.Fields(strings.TrimSpace(s)), ""))
-}
-
-// ValidateUNP проверяет УНП, если он указан (пустое значение допустимо).
-// УНП в Беларуси — 9 символов: у организаций цифры, у физлиц — буквы и цифры.
-// Проверка намеренно мягкая (9–15 букв/цифр), чтобы не отвергать нестандартные записи.
-func ValidateUNP(unp string) error {
-	n := NormalizeUNP(unp)
-	if n == "" {
-		return nil
-	}
-	runes := []rune(n)
-	if len(runes) < 9 || len(runes) > 15 {
-		return fmt.Errorf("УНП %q: ожидается 9 символов (допустимо 9–15)", unp)
-	}
-	for _, r := range runes {
-		isDigit := r >= '0' && r <= '9'
-		isLatin := (r >= 'A' && r <= 'Z')
-		isCyrillic := (r >= 'А' && r <= 'Я') || r == 'Ё'
-		if !isDigit && !isLatin && !isCyrillic {
-			return fmt.Errorf("УНП %q: допустимы только буквы и цифры", unp)
-		}
-	}
-	return nil
-}
-
 // NormalizeName нормализует название для сравнения (регистр, пробелы, ё).
 func NormalizeName(s string) string {
 	s = strings.ToLower(strings.TrimSpace(s))
@@ -243,6 +243,22 @@ func NormalizeName(s string) string {
 func (db *DB) Validate() error {
 	if db.Version != SchemaVersion {
 		return fmt.Errorf("неподдерживаемая версия формата данных: %d (нужна %d)", db.Version, SchemaVersion)
+	}
+	if len(db.Settings.Holidays) > 10000 {
+		return fmt.Errorf("слишком много праздничных дней в настройках: %d", len(db.Settings.Holidays))
+	}
+	holidayDates := make(map[Date]bool, len(db.Settings.Holidays))
+	for _, h := range db.Settings.Holidays {
+		if !h.Date.Valid() {
+			return fmt.Errorf("праздничный день: некорректная дата %q", h.Date)
+		}
+		if holidayDates[h.Date] {
+			return fmt.Errorf("праздничный день %s указан дважды", h.Date)
+		}
+		holidayDates[h.Date] = true
+		if len([]rune(strings.TrimSpace(h.Name))) > 120 {
+			return fmt.Errorf("праздничный день %s: название длиннее 120 символов", h.Date)
+		}
 	}
 	ids := make(map[string]bool, len(db.Suppliers))
 	names := make(map[string]string, len(db.Suppliers))
@@ -260,6 +276,9 @@ func (db *DB) Validate() error {
 		if s.DeferralDays < 0 || s.DeferralDays > 3650 {
 			return fmt.Errorf("поставщик %q: отсрочка вне диапазона 0..3650: %d", s.Name, s.DeferralDays)
 		}
+		if s.Prepayment && s.OnRealization {
+			return fmt.Errorf("поставщик %q: нельзя одновременно выбрать предоплату и реализацию", s.Name)
+		}
 		if prev, ok := names[NormalizeName(s.Name)]; ok {
 			return fmt.Errorf("поставщики %q и %q: одинаковые названия", prev, s.Name)
 		}
@@ -267,7 +286,6 @@ func (db *DB) Validate() error {
 	}
 	buyerIDs := make(map[string]bool, len(db.Buyers))
 	buyerNames := make(map[string]string, len(db.Buyers))
-	buyerUNPs := make(map[string]string, len(db.Buyers))
 	for _, b := range db.Buyers {
 		if b.ID == "" {
 			return fmt.Errorf("покупатель %q: пустой id", b.Name)
@@ -278,15 +296,6 @@ func (db *DB) Validate() error {
 		buyerIDs[b.ID] = true
 		if strings.TrimSpace(b.Name) == "" {
 			return fmt.Errorf("покупатель %s: пустое наименование", b.ID)
-		}
-		if err := ValidateUNP(b.UNP); err != nil {
-			return fmt.Errorf("покупатель %q: %w", b.Name, err)
-		}
-		if unp := NormalizeUNP(b.UNP); unp != "" {
-			if prev, ok := buyerUNPs[unp]; ok {
-				return fmt.Errorf("покупатели %q и %q: одинаковый УНП %s", prev, b.Name, unp)
-			}
-			buyerUNPs[unp] = b.Name
 		}
 		if prev, ok := buyerNames[NormalizeName(b.Name)]; ok {
 			return fmt.Errorf("покупатели %q и %q: одинаковые наименования", prev, b.Name)

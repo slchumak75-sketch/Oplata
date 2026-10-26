@@ -40,10 +40,12 @@ func (s *Server) handleSuppliersList(w http.ResponseWriter, r *http.Request) {
 }
 
 type supplierRequest struct {
-	Name         string `json:"name"`
-	DeferralDays int    `json:"deferral_days"`
-	Note         string `json:"note"`
-	Archived     bool   `json:"archived"`
+	Name          string `json:"name"`
+	DeferralDays  int    `json:"deferral_days"`
+	Note          string `json:"note"`
+	Prepayment    bool   `json:"prepayment"`
+	OnRealization bool   `json:"on_realization"`
+	Archived      bool   `json:"archived"`
 }
 
 func (s *Server) handleSupplierCreate(w http.ResponseWriter, r *http.Request) {
@@ -57,7 +59,8 @@ func (s *Server) handleSupplierCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	created := model.Supplier{ID: model.NewID("sup"), Name: strings.TrimSpace(req.Name),
-		DeferralDays: req.DeferralDays, Note: req.Note, Archived: req.Archived}
+		DeferralDays: req.DeferralDays, Note: req.Note, Prepayment: req.Prepayment,
+		OnRealization: req.OnRealization, Archived: req.Archived}
 	err := s.Store.Update(func(db *model.DB) error {
 		db.Suppliers = append(db.Suppliers, created)
 		return nil
@@ -88,6 +91,8 @@ func (s *Server) handleSupplierUpdate(w http.ResponseWriter, r *http.Request) {
 		sup.Name = strings.TrimSpace(req.Name)
 		sup.DeferralDays = req.DeferralDays
 		sup.Note = req.Note
+		sup.Prepayment = req.Prepayment
+		sup.OnRealization = req.OnRealization
 		sup.Archived = req.Archived
 		cp := *sup
 		updated = &cp
@@ -148,7 +153,7 @@ func (s *Server) handleBuyersList(w http.ResponseWriter, r *http.Request) {
 	db := s.Store.Snapshot()
 	buyers := []model.Buyer{}
 	for _, b := range db.Buyers {
-		if search != "" && !strings.Contains(strings.ToLower(b.Name+" "+b.UNP+" "+b.Note), search) {
+		if search != "" && !strings.Contains(strings.ToLower(b.Name+" "+b.Note), search) {
 			continue
 		}
 		buyers = append(buyers, b)
@@ -158,7 +163,6 @@ func (s *Server) handleBuyersList(w http.ResponseWriter, r *http.Request) {
 
 type buyerRequest struct {
 	Name string `json:"name"`
-	UNP  string `json:"unp"`
 	Note string `json:"note"`
 }
 
@@ -173,7 +177,7 @@ func (s *Server) handleBuyerCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	created := model.Buyer{ID: model.NewID("buy"), Name: strings.TrimSpace(req.Name),
-		UNP: model.NormalizeUNP(req.UNP), Note: strings.TrimSpace(req.Note)}
+		Note: strings.TrimSpace(req.Note)}
 	err := s.Store.Update(func(db *model.DB) error {
 		db.Buyers = append(db.Buyers, created)
 		return nil
@@ -202,7 +206,6 @@ func (s *Server) handleBuyerUpdate(w http.ResponseWriter, r *http.Request) {
 			return fmt.Errorf("укажите наименование покупателя")
 		}
 		buy.Name = strings.TrimSpace(req.Name)
-		buy.UNP = model.NormalizeUNP(req.UNP)
 		buy.Note = strings.TrimSpace(req.Note)
 		cp := *buy
 		updated = &cp
@@ -343,6 +346,12 @@ func resolveObligation(db *model.DB, req obligationRequest) (model.Obligation, e
 	if sup == nil {
 		return model.Obligation{}, fmt.Errorf("поставщик не найден")
 	}
+	// Предоплата и реализация отключают режим отсрочки: даже явно переданная
+	// отсрочка в таком запросе не применяется.
+	effectiveDeferral := sup.EffectiveDeferralDays()
+	if !sup.DeferralInactive() && req.DeferralDays != nil {
+		effectiveDeferral = *req.DeferralDays
+	}
 	var amountExclVAT, vat int64
 	if (req.AmountExclVATCents == nil) != (req.VATCents == nil) {
 		return model.Obligation{}, fmt.Errorf("укажите обе суммы: без НДС и НДС")
@@ -378,22 +387,15 @@ func resolveObligation(db *model.DB, req obligationRequest) (model.Obligation, e
 			return model.Obligation{}, err
 		}
 	} else if delivery != "" {
-		deferral := sup.DeferralDays
-		if req.DeferralDays != nil {
-			deferral = *req.DeferralDays
-		}
-		// Срок из поставки + отсрочка: если выпал на выходной/праздник РБ —
-		// ближайший следующий рабочий день (calc.PaymentDueDate).
-		due = calc.PaymentDueDate(delivery, deferral)
+		// Срок из поставки + эффективная отсрочка: если выпал на субботу,
+		// воскресенье или вручную введённый праздник — ближайший следующий
+		// рабочий день (calc.PaymentDueDate).
+		due = calc.PaymentDueDate(delivery, effectiveDeferral, db.Settings.Holidays)
 	} else {
 		return model.Obligation{}, fmt.Errorf("укажите срок оплаты (due_date) или дату поставки (delivery_date)")
 	}
 	if delivery == "" && req.InferDeliveryDate {
-		deferral := sup.DeferralDays
-		if req.DeferralDays != nil {
-			deferral = *req.DeferralDays
-		}
-		delivery = calc.DeliveryDateForDueDate(due, deferral)
+		delivery = calc.DeliveryDateForDueDate(due, effectiveDeferral, db.Settings.Holidays)
 	}
 	return model.Obligation{
 		SupplierID: req.SupplierID, DueDate: due, AmountCents: req.AmountCents,
@@ -582,6 +584,11 @@ func (s *Server) handleDashboard(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMatrix(w http.ResponseWriter, r *http.Request) {
+	asOf, ok := queryDate(r, "date")
+	if !ok {
+		writeErr(w, http.StatusBadRequest, "некорректная дата в параметре date")
+		return
+	}
 	q := r.URL.Query()
 	// Основной режим вкладки «Таблица»: произвольный диапазон дат (недели пн–вс).
 	if q.Get("from") != "" || q.Get("to") != "" {
@@ -599,7 +606,7 @@ func (s *Server) handleMatrix(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		db := s.Store.Snapshot()
-		writeJSON(w, http.StatusOK, calc.BuildMatrixRange(db, from, to))
+		writeJSON(w, http.StatusOK, calc.BuildMatrixRange(db, from, to, asOf))
 		return
 	}
 	// Совместимость: режим «год + месяц».
@@ -623,7 +630,7 @@ func (s *Server) handleMatrix(w http.ResponseWriter, r *http.Request) {
 		month = m
 	}
 	db := s.Store.Snapshot()
-	writeJSON(w, http.StatusOK, calc.BuildMatrix(db, year, month))
+	writeJSON(w, http.StatusOK, calc.BuildMatrix(db, year, month, asOf))
 }
 
 // ---------- импорт / экспорт / резервные копии ----------

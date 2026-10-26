@@ -78,7 +78,7 @@ table.data td.overdue{color:var(--red);font-weight:700}
 .clickable{cursor:pointer}
 .clickable:hover{text-decoration:underline}
 
-/* Матрица: недели пн–вс, сверху месяц, выходные/праздники РБ — бежевые */
+/* Матрица: недели пн–вс, сверху месяц, выходные/ручные праздники — бежевые */
 .matrix-wrap{overflow:auto;max-height:calc(100vh - 235px);border:1px solid var(--line);border-radius:var(--radius);background:#fff}
 table.matrix{border-collapse:separate;border-spacing:0;font-size:12px}
 table.matrix th,table.matrix td{border-right:1px solid #e5e9f0;border-bottom:1px solid #e5e9f0;padding:3px 5px;min-width:64px}
@@ -88,9 +88,10 @@ table.matrix thead tr.days th{top:26px;background:#fde8e8;white-space:nowrap}
 table.matrix thead tr.kinds th{top:52px;font-size:10.5px;color:#475569}
 table.matrix th.sticky-1,table.matrix td.sticky-1{position:sticky;left:0;z-index:3;background:#fff;min-width:170px;max-width:220px}
 table.matrix th.sticky-2,table.matrix td.sticky-2{position:sticky;left:170px;z-index:3;background:#fff;min-width:92px}
-table.matrix thead th.sticky-1,table.matrix thead th.sticky-2{z-index:6;background:#dbe4f0}
-/* Нерабочие дни (выходные и праздничные по законодательству РБ): бежевым отмечается только шапка дат;
-   поля с данными (tbody) не закрашиваются. */
+table.matrix th.sticky-3,table.matrix td.sticky-3{position:sticky;left:262px;z-index:3;background:#fff;min-width:92px}
+table.matrix thead th.sticky-1,table.matrix thead th.sticky-2,table.matrix thead th.sticky-3{z-index:6;background:#dbe4f0}
+/* Нерабочие дни (суббота/воскресенье и праздники из ручного списка): бежевым отмечается
+   только шапка дат; поля с данными (tbody) не закрашиваются. */
 table.matrix th.dayoff{background:#f5f0e1}
 table.matrix thead tr.days th.dayoff{background:#efe6cf}
 table.matrix thead tr.kinds th.dayoff{background:#f5f0e1}
@@ -102,6 +103,8 @@ table.matrix td.cell.editing{padding:1px}
 table.matrix td.cell .cell-editor{width:100%;min-width:64px;box-sizing:border-box;border:1px solid var(--blue);border-radius:4px;padding:2px 4px;font:inherit;background:#fff}
 table.matrix th.today{background:#fde047}
 table.matrix td.vyplaty{color:var(--green)}
+table.matrix td.debt{font-weight:600}
+table.matrix td.overdue{color:var(--red);font-weight:700}
 table.matrix tr.total td{background:#fff;font-weight:700;border-top:2px solid #cbd5e1;border-bottom:2px solid #cbd5e1}
 table.matrix td.neg{color:var(--red)}
 .legend-dayoff{display:inline-block;width:12px;height:12px;background:#f5f0e1;border:1px solid #cbbfa0;vertical-align:-2px}
@@ -114,11 +117,12 @@ table.matrix td.neg{color:var(--red)}
 table.matrix.week{width:100%}
 table.matrix.week th,table.matrix.week td{min-width:52px;padding:3px 4px}
 table.matrix.week th.sticky-1,table.matrix.week td.sticky-1{width:150px;min-width:150px;max-width:150px}
-table.matrix.week th.sticky-2,table.matrix.week td.sticky-2{left:150px;width:82px;min-width:82px;max-width:82px}
+table.matrix.week th.sticky-2,table.matrix.week td.sticky-2{left:150px;width:92px;min-width:92px;max-width:92px}
+table.matrix.week th.sticky-3,table.matrix.week td.sticky-3{left:242px;width:82px;min-width:82px;max-width:82px}
 table.matrix .supplier-link{display:block;width:100%;border:0;background:transparent;color:var(--blue);padding:0;text-align:left;font-weight:600;cursor:pointer;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 table.matrix .supplier-link:hover{text-decoration:underline}
 table.matrix tr.selected-supplier td.sticky-1{background:#fff;box-shadow:inset 3px 0 0 var(--blue)}
-table.matrix tr.selected-supplier td.sticky-2{background:#fff}
+table.matrix tr.selected-supplier td.sticky-2,table.matrix tr.selected-supplier td.sticky-3{background:#fff}
 .delivery-panel{flex:0 0 330px;width:330px;position:sticky;top:76px;background:var(--panel);border:1px solid var(--line);border-radius:var(--radius);padding:14px;box-shadow:0 2px 10px rgba(15,23,42,.05)}
 .delivery-panel h3{margin:0}
 .delivery-head{display:flex;gap:10px;justify-content:space-between;align-items:flex-start;margin-bottom:10px}
