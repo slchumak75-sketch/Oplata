@@ -6,91 +6,76 @@ import (
 	"github.com/slchumak75-sketch/oplata/pkg/model"
 )
 
-func TestOrthodoxEasterAndRadunitsa(t *testing.T) {
-	cases := []struct {
-		year              int
-		easter, radunitsa model.Date
-	}{
-		{2025, "2025-04-20", "2025-04-29"},
-		{2026, "2026-04-12", "2026-04-21"},
-		{2027, "2027-05-02", "2027-05-11"},
-		{2024, "2024-05-05", "2024-05-14"},
-	}
-	for _, tc := range cases {
-		if got := OrthodoxEaster(tc.year); got != tc.easter {
-			t.Errorf("Пасха %d: получено %s, ожидалось %s", tc.year, got, tc.easter)
-		}
-		if got := Radunitsa(tc.year); got != tc.radunitsa {
-			t.Errorf("Радуница %d: получено %s, ожидалось %s", tc.year, got, tc.radunitsa)
-		}
-	}
+var manualHolidaysForTest = []model.Holiday{
+	{Date: "2025-01-04", Name: "Праздник в субботу"},
+	{Date: "2025-01-06", Name: "Ручной нерабочий понедельник"},
+	{Date: "2025-01-07", Name: "Ручной праздник"},
 }
 
-func TestDayOffInfoBelarus(t *testing.T) {
+func TestDayOffInfoManualCalendar(t *testing.T) {
 	off := []model.Date{
-		"2025-01-01", "2025-01-02", "2025-01-07", "2025-03-08", "2025-04-29",
-		"2025-05-01", "2025-05-09", "2025-07-03", "2025-11-07", "2025-12-25",
 		"2025-01-04", // суббота
 		"2025-01-05", // воскресенье
-		// Переносы 2025 (постановление № 839): будни становятся выходными.
-		"2025-01-06", "2025-04-28", "2025-07-04", "2025-12-26",
-		// Переносы 2026 (№ 397) и 2027 (№ 499).
-		"2026-04-20", "2027-05-10",
+		"2025-01-06", // вручную введённый нерабочий день
+		"2025-01-07", // вручную введённый праздник
 	}
 	for _, d := range off {
-		if dayOff, _ := DayOffInfo(d); !dayOff {
+		if dayOff, _ := DayOffInfo(d, manualHolidaysForTest); !dayOff {
 			t.Errorf("%s должен быть нерабочим днём", d)
 		}
 	}
 	work := []model.Date{
+		"2025-01-01", // законодательный праздник НЕ подставляется при пустом ручном списке
 		"2025-01-08", // обычная среда
-		"2025-01-11", // рабочая суббота за 06.01
-		"2025-04-26", // рабочая суббота за 28.04
-		"2025-07-12", // рабочая суббота за 04.07
-		"2025-12-20", // рабочая суббота за 26.12
-		"2026-04-25", // рабочая суббота за 20.04
-		"2027-05-08", // рабочая суббота за 10.05
+		"2025-05-01", // будний день; станет нерабочим только после ручного ввода
 	}
 	for _, d := range work {
-		if dayOff, name := DayOffInfo(d); dayOff {
-			t.Errorf("%s должен быть рабочим днём, получено выходной (%s)", d, name)
+		if dayOff, name := DayOffInfo(d, nil); dayOff {
+			t.Errorf("%s без ручного праздника должен быть рабочим днём, получено выходной (%s)", d, name)
 		}
 	}
-	if name, ok := HolidayName("2026-04-21"); !ok || name == "" {
-		t.Errorf("Радуница 2026 не распознана: %q %v", name, ok)
+	// Суббота, которая в старом законодательном календаре была рабочей из-за переноса,
+	// в ручном календаре остаётся обычной выходной субботой.
+	if dayOff, _ := DayOffInfo("2025-01-11", nil); !dayOff {
+		t.Error("2025-01-11 должна быть обычной выходной субботой")
 	}
-	if _, ok := HolidayName("2025-06-12"); ok {
-		t.Error("12 июня не является праздником РБ")
+	if name, ok := HolidayName("2025-01-07", manualHolidaysForTest); !ok || name != "Ручной праздник" {
+		t.Errorf("ручной праздник не распознан: %q %v", name, ok)
+	}
+	if _, ok := HolidayName("2025-01-07", nil); ok {
+		t.Error("без ручного ввода дата не должна считаться праздником")
 	}
 }
 
 func TestNextWorkingDayAndPaymentDueDate(t *testing.T) {
 	cases := []struct{ in, want model.Date }{
 		{"2025-01-08", "2025-01-08"}, // обычный рабочий день не сдвигается
-		{"2025-01-04", "2025-01-08"}, // сб → вс → переведённый пн → Рождество → ср
-		{"2025-01-11", "2025-01-11"}, // рабочая суббота остаётся сроком оплаты
-		{"2025-04-28", "2025-04-30"}, // переведённый понедельник → Радуница → среда
-		{"2025-12-25", "2025-12-29"}, // католическое Рождество → перенос → выходные → пн
+		{"2025-01-04", "2025-01-08"}, // сб → вс → два ручных праздника → ср
+		{"2025-01-11", "2025-01-13"}, // обычная суббота → понедельник
 	}
 	for _, tc := range cases {
-		if got := NextWorkingDay(tc.in); got != tc.want {
+		if got := NextWorkingDay(tc.in, manualHolidaysForTest); got != tc.want {
 			t.Errorf("NextWorkingDay(%s)=%s, ожидалось %s", tc.in, got, tc.want)
 		}
 	}
-	// Поставка 21.12.2024 + 14 дней = суббота 04.01.2025; срок — 08.01.2025.
-	if got := PaymentDueDate("2024-12-21", 14); got != "2025-01-08" {
+	// Без ручного списка 1 января — рабочий будний день.
+	if got := PaymentDueDate("2025-01-01", 0, nil); got != "2025-01-01" {
+		t.Fatalf("PaymentDueDate без ручных праздников=%s", got)
+	}
+	// Поставка 21.12.2024 + 14 дней = суббота 04.01.2025; с ручными праздниками срок — 08.01.2025.
+	if got := PaymentDueDate("2024-12-21", 14, manualHolidaysForTest); got != "2025-01-08" {
 		t.Fatalf("PaymentDueDate=%s", got)
 	}
 	// Обратный расчёт для ручного ввода в «Таблице»: самая ранняя поставка,
 	// дающая перенесённый срок 08.01.2025 при отсрочке 14 дней, — 21.12.2024.
-	if got := DeliveryDateForDueDate("2025-01-08", 14); got != "2024-12-21" {
+	if got := DeliveryDateForDueDate("2025-01-08", 14, manualHolidaysForTest); got != "2024-12-21" {
 		t.Fatalf("DeliveryDateForDueDate(перенесённый срок)=%s", got)
 	}
-	if got := DeliveryDateForDueDate("2025-01-15", 14); got != "2025-01-01" {
+	if got := DeliveryDateForDueDate("2025-01-15", 14, manualHolidaysForTest); got != "2025-01-01" {
 		t.Fatalf("DeliveryDateForDueDate(обычный срок)=%s", got)
 	}
 	// Срок вручную оставлен на нерабочем дне: дата поставки = срок - отсрочка.
-	if got := DeliveryDateForDueDate("2025-01-04", 14); got != "2024-12-21" {
+	if got := DeliveryDateForDueDate("2025-01-04", 14, manualHolidaysForTest); got != "2024-12-21" {
 		t.Fatalf("DeliveryDateForDueDate(нерабочий срок)=%s", got)
 	}
 }

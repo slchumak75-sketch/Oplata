@@ -77,7 +77,8 @@ func Open(path string) (*Store, error) {
 // Decode разбирает и валидирует JSON базы. Пустые срезы нормализуются в [] (не null в API).
 // Здесь же живут миграции формата: v1 -> v2 добавляет пустой справочник покупателей;
 // v2 -> v3 добавляет необязательную разбивку начислений по НДС; v3 -> v4 удаляет
-// Supplier.UNP (поле старого JSON просто игнорируется при Unmarshal).
+// Supplier.UNP; v4 -> v5 удаляет Buyer.UNP и добавляет ручные праздники/режимы оплаты.
+// Поля удалённых УНП в старом JSON просто игнорируются при Unmarshal.
 func Decode(data []byte) (*model.DB, error) {
 	var db model.DB
 	if err := json.Unmarshal(data, &db); err != nil {
@@ -101,6 +102,15 @@ func Decode(data []byte) (*model.DB, error) {
 	if db.Warnings == nil {
 		db.Warnings = []string{}
 	}
+	if db.Settings.Holidays == nil {
+		db.Settings.Holidays = []model.Holiday{}
+	}
+	for i := range db.Settings.Holidays {
+		db.Settings.Holidays[i].Name = strings.TrimSpace(db.Settings.Holidays[i].Name)
+	}
+	slices.SortFunc(db.Settings.Holidays, func(a, b model.Holiday) int {
+		return strings.Compare(string(a.Date), string(b.Date))
+	})
 	if err := db.Validate(); err != nil {
 		return nil, err
 	}
@@ -159,11 +169,15 @@ func (s *Store) ReplaceAll(db *model.DB) error {
 
 func cloneDB(db *model.DB) *model.DB {
 	out := *db
+	out.Settings.Holidays = slices.Clone(db.Settings.Holidays)
 	out.Suppliers = slices.Clone(db.Suppliers)
 	out.Obligations = slices.Clone(db.Obligations)
 	out.Payments = slices.Clone(db.Payments)
 	out.Buyers = slices.Clone(db.Buyers)
 	out.Warnings = slices.Clone(db.Warnings)
+	if out.Settings.Holidays == nil {
+		out.Settings.Holidays = []model.Holiday{}
+	}
 	if out.Suppliers == nil {
 		out.Suppliers = []model.Supplier{}
 	}

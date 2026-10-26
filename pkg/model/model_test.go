@@ -33,29 +33,44 @@ func TestCentsFormatting(t *testing.T) {
 	}
 }
 
-func TestBuyerUNP(t *testing.T) {
-	if got := NormalizeUNP(" 123 456 789 "); got != "123456789" {
-		t.Fatalf("NormalizeUNP=%q", got)
+func TestSupplierPaymentModesAndManualHolidays(t *testing.T) {
+	if got := (Supplier{DeferralDays: 14}).EffectiveDeferralDays(); got != 14 {
+		t.Fatalf("обычная отсрочка=%d", got)
 	}
-	if err := ValidateUNP("123456789"); err != nil {
-		t.Fatalf("валидный УНП отклонён: %v", err)
+	if got := (Supplier{DeferralDays: 14, Prepayment: true}).EffectiveDeferralDays(); got != 0 {
+		t.Fatalf("предоплата должна отключать отсрочку, получено %d", got)
 	}
-	if err := ValidateUNP(""); err != nil {
-		t.Fatalf("пустой УНП должен быть допустим: %v", err)
+	if got := (Supplier{DeferralDays: 14, OnRealization: true}).EffectiveDeferralDays(); got != 0 {
+		t.Fatalf("реализация должна отключать отсрочку, получено %d", got)
 	}
-	for _, bad := range []string{"123", "12345678!", "1234567890123456"} {
-		if err := ValidateUNP(bad); err == nil {
-			t.Fatalf("УНП %q должен отвергаться", bad)
-		}
-	}
+
 	db := NewEmptyDB()
-	db.Buyers = []Buyer{{ID: "b1", Name: "Покупатель", UNP: "123456789"}}
+	if db.Settings.Holidays == nil {
+		t.Fatal("у новой базы holidays должен быть [], а не null")
+	}
+	db.Buyers = []Buyer{{ID: "b1", Name: "Покупатель"}}
 	if err := db.Validate(); err != nil {
 		t.Fatalf("валидный покупатель отклонён: %v", err)
 	}
-	db.Buyers = append(db.Buyers, Buyer{ID: "b2", Name: "Другой", UNP: "123456789"})
+	db.Buyers = append(db.Buyers, Buyer{ID: "b2", Name: " покупатель "})
 	if err := db.Validate(); err == nil {
-		t.Fatal("дублирующийся УНП покупателей должен отвергаться")
+		t.Fatal("дублирующееся наименование покупателя должно отвергаться")
+	}
+
+	db = NewEmptyDB()
+	db.Suppliers = []Supplier{{ID: "s1", Name: "АВИДО", Prepayment: true, OnRealization: true}}
+	if err := db.Validate(); err == nil {
+		t.Fatal("одновременная предоплата и реализация должна отвергаться")
+	}
+
+	db = NewEmptyDB()
+	db.Settings.Holidays = []Holiday{{Date: "2025-01-01", Name: "Новый год"}, {Date: "2025-01-01", Name: "Дубликат"}}
+	if err := db.Validate(); err == nil {
+		t.Fatal("дублирующаяся дата праздника должна отвергаться")
+	}
+	db.Settings.Holidays = []Holiday{{Date: "2025-02-29", Name: "Некорректная дата"}}
+	if err := db.Validate(); err == nil {
+		t.Fatal("некорректная дата праздника должна отвергаться")
 	}
 }
 

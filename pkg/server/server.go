@@ -22,6 +22,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 
 	"github.com/slchumak75-sketch/oplata/pkg/model"
@@ -191,10 +192,11 @@ func (s *Server) handleBootstrap(w http.ResponseWriter, r *http.Request) {
 }
 
 type settingsRequest struct {
-	CompanyName   *string `json:"company_name"`
-	CurrencyLabel *string `json:"currency_label"`
-	WarnDays      *int    `json:"warn_days"`
-	ClearWarnings bool    `json:"clear_warnings"`
+	CompanyName   *string          `json:"company_name"`
+	CurrencyLabel *string          `json:"currency_label"`
+	WarnDays      *int             `json:"warn_days"`
+	Holidays      *[]model.Holiday `json:"holidays"`
+	ClearWarnings bool             `json:"clear_warnings"`
 }
 
 func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
@@ -215,6 +217,28 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 				return fmt.Errorf("warn_days вне диапазона 0..365")
 			}
 			db.Settings.WarnDays = *req.WarnDays
+		}
+		if req.Holidays != nil {
+			if len(*req.Holidays) > 10000 {
+				return fmt.Errorf("слишком много праздничных дней: %d", len(*req.Holidays))
+			}
+			seen := make(map[model.Date]bool, len(*req.Holidays))
+			holidays := make([]model.Holiday, 0, len(*req.Holidays))
+			for _, h := range *req.Holidays {
+				date, err := model.ParseDate(string(h.Date))
+				if err != nil {
+					return fmt.Errorf("праздничный день: %w", err)
+				}
+				if seen[date] {
+					return fmt.Errorf("праздничный день %s указан дважды", date)
+				}
+				seen[date] = true
+				holidays = append(holidays, model.Holiday{Date: date, Name: strings.TrimSpace(h.Name)})
+			}
+			slices.SortFunc(holidays, func(a, b model.Holiday) int {
+				return strings.Compare(string(a.Date), string(b.Date))
+			})
+			db.Settings.Holidays = holidays
 		}
 		if req.ClearWarnings {
 			db.Warnings = []string{}

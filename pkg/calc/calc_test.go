@@ -60,6 +60,10 @@ func TestAllocateStorno(t *testing.T) {
 
 func testDB() *model.DB {
 	db := model.NewEmptyDB()
+	db.Settings.Holidays = []model.Holiday{
+		{Date: "2025-01-06", Name: "Ручной нерабочий день"},
+		{Date: "2025-01-07", Name: "Ручной праздник"},
+	}
 	db.Suppliers = []model.Supplier{{ID: "s1", Name: "АВИДО"}, {ID: "s2", Name: "МАВ"}}
 	db.Obligations = []model.Obligation{
 		obl("o1", "2025-01-10", 100_00),
@@ -86,44 +90,56 @@ func TestDashboardAndMatrix(t *testing.T) {
 		t.Fatalf("month accrued=%d paid=%d", d.AccruedMonth, d.PaidMonthCents)
 	}
 
-	m := BuildMatrix(db, 2025, 1)
+	m := BuildMatrix(db, 2025, 1, "2025-01-31")
 	// Столбец B — за отображаемый диапазон (январь): o3 от 05.02 сюда НЕ входит.
-	if len(m.Days) != 31 || m.GrandRange != 260_00 {
-		t.Fatalf("matrix days=%d grand=%d, want 26000", len(m.Days), m.GrandRange)
+	if len(m.Days) != 31 || m.GrandRange != 260_00 || m.AsOf != "2025-01-31" || m.GrandOverdue != 60_00 {
+		t.Fatalf("matrix days=%d grand=%d as_of=%s overdue=%d", len(m.Days), m.GrandRange, m.AsOf, m.GrandOverdue)
 	}
 	// Диапазон на весь год = общий долг (все операции тестовой базы в 2025 году).
-	year := BuildMatrixRange(db, "2025-01-01", "2025-12-31")
+	year := BuildMatrixRange(db, "2025-01-01", "2025-12-31", "2025-01-31")
 	if year.GrandRange != d.TotalDebtCents {
 		t.Fatalf("matrix year grand=%d, want %d", year.GrandRange, d.TotalDebtCents)
 	}
-	if m.DayTotals[9].SobstvCents != 100_00 || m.DayTotals[9].VyplatyCents != 40_00 {
+	if m.DayTotals[9].SobstvCents != 100_00 || m.DayTotals[9].VyplatyCents != 40_00 || m.DayTotals[9].DebtCents != 60_00 {
 		t.Fatalf("day totals 10.01: %+v", m.DayTotals[9])
 	}
-	mFeb := BuildMatrix(db, 2025, 2)
+	if m.Rows[0].OpeningBalanceCents != 0 || m.Rows[0].OverdueCents != 60_00 || len(m.Rows[0].Cells) != 1 || m.Rows[0].Cells[0].DebtCents != 60_00 {
+		t.Fatalf("строка s1 с долгом/просрочкой: %+v", m.Rows[0])
+	}
+	mFeb := BuildMatrix(db, 2025, 2, "2025-01-31")
 	if len(mFeb.Days) != 28 {
 		t.Fatalf("февраль 2025: %d дней", len(mFeb.Days))
 	}
 
-	// Недельный диапазон через BuildMatrixRange + календарь РБ.
-	// 2025-01-06 (пн) — переведённый выходной, 2025-01-07 — православное Рождество,
-	// 2025-01-11 — рабочая суббота, 2025-01-12 — воскресенье.
-	w := BuildMatrixRange(db, "2025-01-06", "2025-01-12")
+	// Недельный диапазон через BuildMatrixRange + ручной календарь.
+	// 2025-01-06 и 2025-01-07 заданы вручную в настройках тестовой базы,
+	// 2025-01-11 — обычная суббота, 2025-01-12 — воскресенье.
+	w := BuildMatrixRange(db, "2025-01-06", "2025-01-12", "2025-01-31")
 	if len(w.Days) != 7 || w.Days[0].Weekday != 1 || w.Days[6].Weekday != 7 {
 		t.Fatalf("неделя пн–вс: %+v", w.Days)
 	}
 	if !w.Days[0].IsDayOff || !w.Days[1].IsHoliday || w.Days[1].HolidayName == "" {
 		t.Fatalf("выходной/праздник: %+v %+v", w.Days[0], w.Days[1])
 	}
-	if w.Days[5].IsDayOff || !w.Days[5].IsWorkdayTransfer {
-		t.Fatalf("рабочая суббота 2025-01-11: %+v", w.Days[5])
+	if !w.Days[5].IsDayOff || w.Days[5].IsWorkdayTransfer {
+		t.Fatalf("обычная суббота 2025-01-11: %+v", w.Days[5])
+	}
+	if w.DayTotals[4].DebtCents != 60_00 || w.Rows[0].Cells[0].DebtCents != 60_00 {
+		t.Fatalf("нарастающий долг недели: total=%+v row=%+v", w.DayTotals[4], w.Rows[0])
 	}
 	if !w.Days[6].IsWeekend || !w.Days[6].IsDayOff {
 		t.Fatalf("воскресенье: %+v", w.Days[6])
 	}
 	// Диапазон через границу месяца: 30.01–02.02 — сегменты месяцев в днях.
-	x := BuildMatrixRange(db, "2025-01-30", "2025-02-02")
+	x := BuildMatrixRange(db, "2025-01-30", "2025-02-02", "2025-01-31")
 	if len(x.Days) != 4 || x.Days[0].Month != 1 || x.Days[3].Month != 2 || x.Days[3].Year != 2025 {
 		t.Fatalf("граница месяцев: %+v", x.Days)
+	}
+	// Диапазон после операций 10.01: входящий баланс переносится в ежедневный «Долг»,
+	// даже если в самих днях диапазона операций s1 нет.
+	after := BuildMatrixRange(db, "2025-01-11", "2025-01-12", "2025-01-31")
+	if after.Rows[0].OpeningBalanceCents != 60_00 || after.DayTotals[0].DebtCents != 60_00 || after.Rows[0].OverdueCents != 60_00 {
+		t.Fatalf("входящий долг/просрочка: row=%+v total=%+v", after.Rows[0], after.DayTotals[0])
 	}
 
 	card := BuildSupplierCard(db, "s1", model.Date("2025-01-31"))
