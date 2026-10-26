@@ -349,17 +349,18 @@ function weekMatrixHead(days, entityLabel) {
     '<tr class="kinds"><th class="sticky-1"></th><th class="sticky-2">на сегодня</th>' +
     '<th class="sticky-3">за неделю</th>' + kindHeaders + '</tr></thead>';
 }
-function weekToolbarHtml(anchor, summaryHtml) {
+function weekToolbarHtml(anchor, summaryHtml, actionHtml) {
   const from = anchor;
   const to = addDaysISO(anchor, 6);
-  return '<div class="toolbar matrix-toolbar">' +
+  return '<div class="toolbar matrix-toolbar"><div class="week-nav">' +
     '<button class="btn" id="weekBack" title="Предыдущая неделя">← Неделя</button>' +
     '<strong class="week-title">Неделя: ' + fmtDate(from) + ' — ' + fmtDate(to) + '</strong>' +
     '<button class="btn" id="weekFwd" title="Следующая неделя">Неделя →</button>' +
     '<button class="btn" id="gotoToday">Сегодня</button>' +
-    '<label class="muted">Дата <input type="date" id="gotoDate" value="' + esc(anchor) + '"></label>' +
-    '<button class="btn" id="gotoBtn">Перейти</button>' +
-    '<span class="spacer"></span><span class="muted">' + summaryHtml + '</span></div>';
+    '<label class="muted week-date">Дата <input type="date" id="gotoDate" value="' + esc(anchor) + '"></label>' +
+    '<button class="btn" id="gotoBtn">Перейти</button></div>' +
+    '<div class="week-actions">' + (actionHtml || '') + '</div>' +
+    '<div class="week-summary">' + summaryHtml + '</div></div>';
 }
 function bindWeekToolbar(view, anchor, rerender) {
   $('#weekBack', view).onclick = () => rerender(addDaysISO(anchor, -7));
@@ -369,6 +370,25 @@ function bindWeekToolbar(view, anchor, rerender) {
     const v = $('#gotoDate', view).value;
     if (v) rerender(mondayOfISO(v));
   };
+}
+async function clearAllAmounts(view, anchor) {
+  const ok = await confirmDialog(
+    'Очистить все суммы',
+    'Удалить ВСЕ приходы и оплаты за все даты? Поставщики, покупатели, условия оплаты и настройки сохранятся. Перед очисткой программа автоматически сделает резервную копию файла данных.',
+    'Очистить суммы'
+  );
+  if (!ok) return;
+  try {
+    const res = await api('/api/clear-amounts', {method: 'POST', json: {confirm: 'CLEAR_AMOUNTS'}});
+    await loadSuppliersCached();
+    await loadBuyersCached();
+    state.matrixDeliveryDraft = {supplier_id: '', date: '', amount: ''};
+    toast('Все суммы очищены: приходов ' + (res.removed_obligations || 0) +
+      ', оплат ' + (res.removed_payments || 0), 'ok');
+    await renderMatrix(view, anchor);
+  } catch (e) {
+    toast(e.message, 'error');
+  }
 }
 function localWeekDays(anchor) {
   const holidays = {};
@@ -514,8 +534,6 @@ function openDeliveryPopup(view, supplier) {
   if (first) first.focus();
 }
 
-let matrixCellEditing = false;
-
 function matrixOperationPayload(op, cents) {
   if (op.kind === 'obligation') {
     // При прямом изменении суммы старая разбивка НДС больше не соответствует итогу,
@@ -610,71 +628,57 @@ async function saveMatrixCellValue(td, cents) {
   return true;
 }
 
-function startMatrixCellEdit(view, anchor, td) {
-  if (matrixCellEditing) return;
-  matrixCellEditing = true;
-  const originalHtml = td.innerHTML;
-  const currentCents = parseInt(td.dataset.cellCents, 10) || 0;
-  const input = document.createElement('input');
-  input.type = 'text';
-  input.className = 'money cell-editor';
-  input.inputMode = 'decimal';
-  input.value = currentCents ? fmtMoney(currentCents).replace(/\u00A0/g, ' ') : '';
-  input.setAttribute('aria-label', td.dataset.cellKind === 'payment' ? 'Сумма оплаты' : 'Сумма прихода');
-  td.classList.add('editing');
-  td.innerHTML = '';
-  td.appendChild(input);
-  input.focus();
-  input.select();
-
-  let done = false;
-  const cancel = () => {
-    if (done) return;
-    done = true;
-    matrixCellEditing = false;
-    td.classList.remove('editing');
-    td.innerHTML = originalHtml;
-  };
-  const commit = async () => {
-    if (done) return;
-    done = true;
-    const raw = input.value.trim();
-    const cents = raw === '' ? 0 : parseMoneyToCents(raw);
-    if (cents === null || (td.dataset.cellKind === 'obligation' && cents < 0)) {
-      toast('Укажите сумму, например 1 200,00. Пустая ячейка очищает сумму.', 'error');
-      matrixCellEditing = false;
-      await renderMatrix(view, anchor);
-      return;
-    }
-    input.disabled = true;
-    try {
-      const changed = await saveMatrixCellValue(td, cents);
-      if (changed) toast(cents === 0 ? 'Ячейка очищена' : 'Сумма сохранена', 'ok');
-    } catch (e) {
-      toast(e.message, 'error');
-    } finally {
-      matrixCellEditing = false;
-      await renderMatrix(view, anchor);
-    }
-  };
-  input.addEventListener('click', (e) => e.stopPropagation());
-  input.addEventListener('keydown', (e) => {
-    e.stopPropagation();
-    if (e.key === 'Enter') { e.preventDefault(); commit(); }
-    else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
-  });
-  input.addEventListener('blur', () => commit());
-}
-
 function bindMatrixCellEditors(view, anchor) {
-  view.querySelectorAll('[data-cell-sup]').forEach((td) => {
-    td.onclick = () => startMatrixCellEdit(view, anchor, td);
-    td.onkeydown = (e) => {
-      if (e.target === td && (e.key === 'Enter' || e.key === ' ')) {
+  view.querySelectorAll('.cell-input').forEach((input) => {
+    const td = input.closest('td');
+    if (!td) return;
+    const initialCents = parseInt(td.dataset.cellCents, 10) || 0;
+    let committing = false;
+    let cancelling = false;
+
+    input.addEventListener('focus', () => {
+      state.matrixSupplierId = td.dataset.cellSup || '';
+      view.querySelectorAll('table.matrix tr.selected-supplier').forEach((tr) => tr.classList.remove('selected-supplier'));
+      const row = td.closest('tr');
+      if (row) row.classList.add('selected-supplier');
+      input.select();
+    });
+    input.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
         e.preventDefault();
-        startMatrixCellEdit(view, anchor, td);
+        input.blur();
+      } else if (e.key === 'Escape') {
+        e.preventDefault();
+        cancelling = true;
+        input.value = input.dataset.originalValue || '';
+        input.blur();
       }
-    };
+    });
+    input.addEventListener('blur', async () => {
+      if (cancelling || committing) return;
+      const raw = input.value.trim().replace(/−/g, '-');
+      const cents = raw === '' ? 0 : parseMoneyToCents(raw);
+      if (cents === null || (td.dataset.cellKind === 'obligation' && cents < 0)) {
+        toast('Укажите сумму, например 1 200,00. Пустое поле очищает сумму.', 'error');
+        await renderMatrix(view, anchor);
+        return;
+      }
+      if (cents === initialCents) {
+        input.value = input.dataset.originalValue || '';
+        return;
+      }
+      committing = true;
+      input.disabled = true;
+      try {
+        const changed = await saveMatrixCellValue(td, cents);
+        if (changed) toast(cents === 0 ? 'Поле очищено' : 'Сумма сохранена', 'ok');
+      } catch (e) {
+        toast(e.message, 'error');
+      } finally {
+        committing = false;
+        await renderMatrix(view, anchor);
+      }
+    });
   });
 }
 
@@ -706,9 +710,15 @@ async function renderMatrix(view, targetMonday) {
       runningDebt += (c.sobstv_cents || 0) - (c.vyplaty_cents || 0);
       const debt = Object.prototype.hasOwnProperty.call(c, 'debt_cents') ? c.debt_cents : runningDebt;
       const attr = ' data-cell-sup="' + esc(r.supplier.id) + '" data-cell-date="' + d.date + '"';
-      return '<td class="cell num' + weekDataDayClass(d, true) + '"' + attr + ' data-cell-kind="obligation" data-cell-cents="' + c.sobstv_cents + '" tabindex="0">' + fmtMoneyShort(c.sobstv_cents) + '</td>' +
+      const cellInput = (kind, cents, label) => {
+        const value = cents ? fmtMoneyShort(cents) : '';
+        return '<input type="text" class="money cell-input" inputmode="decimal" value="' + esc(value) +
+          '" data-original-value="' + esc(value) + '" aria-label="' + label + ': ' +
+          esc(r.supplier.name) + ', ' + fmtDate(d.date) + '">';
+      };
+      return '<td class="cell num' + weekDataDayClass(d, true) + '"' + attr + ' data-cell-kind="obligation" data-cell-cents="' + c.sobstv_cents + '">' + cellInput('obligation', c.sobstv_cents, 'Приход') + '</td>' +
         '<td class="num debt' + (debt < 0 ? ' neg' : '') + weekDataDayClass(d, false) + '">' + fmtMoneyShort(debt) + '</td>' +
-        '<td class="cell num vyplaty' + weekDataDayClass(d, false) + '"' + attr + ' data-cell-kind="payment" data-cell-cents="' + c.vyplaty_cents + '" tabindex="0">' + (c.vyplaty_cents ? (c.vyplaty_cents > 0 ? '−' : '') + fmtMoneyShort(c.vyplaty_cents) : '') + '</td>';
+        '<td class="cell num vyplaty' + weekDataDayClass(d, false) + '"' + attr + ' data-cell-kind="payment" data-cell-cents="' + c.vyplaty_cents + '">' + cellInput('payment', c.vyplaty_cents, 'Оплата') + '</td>';
     }).join('');
     return '<tr' + (r.supplier.id === state.matrixSupplierId ? ' class="selected-supplier"' : '') + '>' +
       '<td class="sticky-1"><button type="button" class="supplier-link" data-delivery-sup="' + esc(r.supplier.id) + '" title="Ввести поставку поставщика">' + esc(r.supplier.name) + '</button></td>' +
@@ -716,9 +726,10 @@ async function renderMatrix(view, targetMonday) {
       '<td class="sticky-3 num' + (r.range_balance_cents < 0 ? ' neg' : '') + '" title="Задолженность за всё время: ' + esc(fmtMoney(r.balance_cents)) + '">' + fmtMoneyShort(r.range_balance_cents) + '</td>' + cells + '</tr>';
   }).join('');
   view.innerHTML =
-    weekToolbarHtml(anchor, 'Задолженность за неделю: <strong>' + fmtMoney(m.grand_range_cents) +
-      ' ' + esc(state.settings.currency_label || '') +
-      '</strong> · наименование — всплывающая поставка · ячейка — изменить сумму') +
+    weekToolbarHtml(anchor, '<span class="summary-label">Задолженность за неделю:</span>' +
+      '<strong class="summary-value">' + fmtMoney(m.grand_range_cents) +
+      ' ' + esc(state.settings.currency_label || '') + '</strong>',
+      '<button class="btn btn-danger" id="clearAmounts" type="button">Очистить суммы</button>') +
     '<div class="matrix-wrap week" id="matrixWrap"><table class="matrix week">' +
     weekMatrixColgroup() + weekMatrixHead(m.days, 'ПОСТАВЩИК') + '<tbody>' +
     '<tr class="total"><td class="sticky-1">ВСЕГО</td><td class="sticky-2 num' + (m.grand_overdue_cents > 0 ? ' overdue' : '') + '">' + fmtMoneyShort(m.grand_overdue_cents) + '</td><td class="sticky-3 num">' + fmtMoneyShort(m.grand_range_cents) + '</td>' + totalCells + '</tr>' +
@@ -727,9 +738,10 @@ async function renderMatrix(view, targetMonday) {
     'перескакивают сразу на 7 дней. В шапке дат <span class="legend-dayoff"></span> — субботы, воскресенья и праздники, введённые вручную на вкладке «Данные»; ' +
     'наведите курсор на дату — покажется название праздника. Жёлтым в шапке отмечен сегодняшний день; поля с суммами не закрашиваются. ' +
     'Слева от «за неделю» показано просрочено на сегодня. Дата вверху — срок оплаты с учётом эффективной отсрочки; для нового прихода из ячейки дата поставки в карточке рассчитывается от срока по отсрочке. ' +
-    '«Приход» — к оплате, «Долг» — баланс поставщика после операций дня, «Оплата» показана с минусом. ' +
-    'Клик по ячейке редактирует сумму прямо в таблице: Enter — сохранить, Esc — отмена, пустое значение — очистить. ' +
-    'Если за день было несколько операций — в ячейке их сумма. Клик по наименованию поставщика открывает всплывающую форму «Поставка».</p>';
+    '«Приход» — к оплате, «Долг» — баланс поставщика после операций дня, «Оплата» вводится положительной суммой и уменьшает долг. ' +
+    'Суммы можно вводить двумя способами: напрямую в полях «Приход» и «Оплата» (Enter, Tab или уход из поля — сохранить; Esc — отмена; пустое поле — очистить) ' +
+    'и через всплывающую форму «Поставка», которая открывается по наименованию поставщика и сама рассчитывает срок оплаты. ' +
+    'Если за день было несколько операций — в поле показана их сумма.</p>';
 
   bindMatrixCellEditors(view, anchor);
 
@@ -745,6 +757,7 @@ async function renderMatrix(view, targetMonday) {
   });
 
   bindWeekToolbar(view, anchor, (nextMonday) => renderMatrix(view, nextMonday));
+  $('#clearAmounts', view).onclick = () => clearAllAmounts(view, anchor);
 }
 
 /* ---------- «Покупатели»: та же очищенная недельная таблица ---------- */
@@ -771,8 +784,8 @@ async function renderBuyers(view, targetMonday) {
     '<tr><td colspan="24" class="muted">Покупателей пока нет. Добавьте первого через кнопку «Карточка покупателя» в шапке.</td></tr>';
 
   view.innerHTML =
-    weekToolbarHtml(anchor, 'Покупателей: <strong>' + buyers.length +
-      '</strong> · наименование — карточка покупателя') +
+    weekToolbarHtml(anchor, '<span class="summary-label">Покупателей:</span>' +
+      '<strong class="summary-value">' + buyers.length + '</strong>') +
     '<div class="matrix-wrap week" id="matrixWrap"><table class="matrix week">' +
     weekMatrixColgroup() + weekMatrixHead(days, 'ПОКУПАТЕЛЬ') + '<tbody>' +
     '<tr class="total"><td class="sticky-1">ВСЕГО</td>' +
@@ -1035,23 +1048,25 @@ async function afterMutation(refresh) {
 }
 function supplierForm(existing, refresh) {
   const s = existing || {name: '', deferral_days: 0, note: '', prepayment: false, on_realization: false, archived: false};
-  const modal = openModal('<h3>' + (existing ? 'Карточка поставщика: ' + esc(s.name) : 'Новый поставщик') + '</h3><div class="form-grid">' +
-    (existing ? '' : '<label class="field full">Наименование поставщика * <input type="text" id="supName" value="' + esc(s.name) + '"></label>') +
+  const modal = openModal('<h3>' + (existing ? 'Карточка поставщика' : 'Новый поставщик') + '</h3><div class="form-grid entity-card-form">' +
+    '<label class="field full">Наименование поставщика * <input type="text" id="supName" value="' + esc(s.name) + '"></label>' +
     '<label class="field">Отсрочка платежа, дней <input type="number" id="supDeferral" min="0" max="3650" value="' + (s.deferral_days || 0) + '">' +
-    '<span class="hint">Срок оплаты будет предлагаться как дата поставки + отсрочка. 0 — вводить срок вручную. При предоплате или реализации поле неактивно.</span></label>' +
-    '<label class="field"><span><input type="checkbox" id="supPrepayment"' + (s.prepayment ? ' checked' : '') + '> Предоплата</span><span class="hint">Режим отсрочки отключён.</span></label>' +
-    '<label class="field"><span><input type="checkbox" id="supRealization"' + (s.on_realization ? ' checked' : '') + '> Реализация</span><span class="hint">Режим отсрочки отключён.</span></label>' +
-    (existing ? '<label class="field full"><span><input type="checkbox" id="supArchived"' + (s.archived ? ' checked' : '') + '> В архиве (скрывать из списков, историю сохранить)</span></label>' : '') +
-    '</div><div class="modal-actions">' +
+    '<span class="hint">Срок оплаты = дата поставки + отсрочка. 0 — срок вручную.</span></label>' +
+    '<div class="field"><span>Режим оплаты</span><div class="mode-options">' +
+    '<label><input type="checkbox" id="supPrepayment"' + (s.prepayment ? ' checked' : '') + '> Предоплата</label>' +
+    '<label><input type="checkbox" id="supRealization"' + (s.on_realization ? ' checked' : '') + '> Реализация</label></div>' +
+    '<span class="hint">При выбранном режиме отсрочка неактивна.</span></div>' +
+    (existing ? '<label class="field full"><span class="check-row"><input type="checkbox" id="supArchived"' + (s.archived ? ' checked' : '') + '> В архиве (скрывать из списков, историю сохранить)</span></label>' : '') +
+    '</div><div class="modal-actions entity-actions">' +
     (existing ? '<button class="btn btn-danger" id="supDelete" style="margin-right:auto">Удалить поставщика</button>' : '') +
-    '<button class="btn" id="supCancel">Отмена</button><button class="btn btn-primary" id="supSave">' + (existing ? 'Сохранить' : 'Добавить поставщика') + '</button></div>');
+    '<button class="btn" id="supCancel">Отмена</button><button class="btn btn-primary" id="supSave">' + (existing ? 'Сохранить' : 'Добавить поставщика') + '</button></div>', true);
   bindSupplierModeControls($('#supPrepayment', modal), $('#supRealization', modal), $('#supDeferral', modal));
   $('#supCancel', modal).onclick = closeModal;
   $('#supSave', modal).onclick = async () => {
     const payload = {
-      name: existing ? s.name : $('#supName', modal).value.trim(),
+      name: $('#supName', modal).value.trim(),
       deferral_days: parseInt($('#supDeferral', modal).value, 10) || 0,
-      // Поле «Примечание» убрано из карточки; ранее сохранённый текст не стираем.
+      // Поля примечания в карточке нет; ранее сохранённый текст не стираем.
       note: s.note || '',
       prepayment: $('#supPrepayment', modal).checked,
       on_realization: $('#supRealization', modal).checked,
@@ -1081,12 +1096,12 @@ function supplierForm(existing, refresh) {
 
 function buyerForm(existing, refresh) {
   const b = existing || {name: '', note: ''};
-  const modal = openModal('<h3>' + (existing ? 'Карточка покупателя: ' + esc(b.name) : 'Новый покупатель') + '</h3><div class="form-grid">' +
+  const modal = openModal('<h3>' + (existing ? 'Карточка покупателя' : 'Новый покупатель') + '</h3><div class="form-grid entity-card-form">' +
     '<label class="field full">Наименование покупателя * <input type="text" id="buyName" value="' + esc(b.name) + '"></label>' +
     '<label class="field full">Примечание <input type="text" id="buyNote" value="' + esc(b.note || '') + '"></label>' +
-    '</div><div class="modal-actions">' +
-    (existing ? '<button class="btn btn-danger" id="buyDelete" style="margin-right:auto">Удалить покупателя</button>' : '') +
-    '<button class="btn" id="buyCancel">Отмена</button><button class="btn btn-primary" id="buySave">' + (existing ? 'Сохранить' : 'Добавить покупателя') + '</button></div>');
+    '</div><div class="modal-actions entity-actions">' +
+    (existing ? '<button class="btn btn-danger" id="buyDelete">Удалить</button><span class="spacer"></span>' : '') +
+    '<button class="btn" id="buyCancel">Отмена</button><button class="btn btn-primary" id="buySave">' + (existing ? 'Сохранить' : 'Добавить покупателя') + '</button></div>', true);
   $('#buyCancel', modal).onclick = closeModal;
   $('#buySave', modal).onclick = async () => {
     const payload = {
@@ -1118,29 +1133,34 @@ function buyerForm(existing, refresh) {
 }
 
 // supplierCardModal — окно «Карточка поставщика» из синей шапки:
-// выбор поставщика, условия оплаты/отсрочка, кнопки Добавить/Удалить/Сохранить.
-// Поля наименования и примечания из этой карточки убраны по просьбе владельца.
+// выбор и редактирование поставщика, условия оплаты/отсрочка,
+// кнопки Добавить/Удалить/Сохранить.
 async function supplierCardModal() {
   if (!state.suppliers) await loadSuppliersCached();
   const list = state.suppliers || [];
   const first = list.length ? list[0].supplier : null;
-  const modal = openModal('<h3>🏭 Карточка поставщика</h3><div class="form-grid">' +
+  const modal = openModal('<h3>🏭 Карточка поставщика</h3><div class="form-grid entity-card-form">' +
     '<label class="field full">Поставщик <select id="scSelect">' + supplierOptions(first ? first.id : '', false) + '</select></label>' +
+    '<label class="field full">Наименование поставщика * <input type="text" id="scName"></label>' +
     '<label class="field">Отсрочка платежа, дней <input type="number" id="scDeferral" min="0" max="3650">' +
-    '<span class="hint">Срок оплаты = дата поставки + отсрочка. 0 — срок вручную. При предоплате или реализации поле неактивно.</span></label>' +
-    '<label class="field"><span><input type="checkbox" id="scPrepayment"> Предоплата</span><span class="hint">Режим отсрочки отключён.</span></label>' +
-    '<label class="field"><span><input type="checkbox" id="scRealization"> Реализация</span><span class="hint">Режим отсрочки отключён.</span></label>' +
-    '<label class="field full"><span><input type="checkbox" id="scArchived"> В архиве (скрывать из списков, историю сохранить)</span></label>' +
-    '</div><div class="modal-actions">' +
-    '<button class="btn btn-danger" id="scDelete" style="margin-right:auto">Удалить поставщика</button>' +
+    '<span class="hint">Срок оплаты = дата поставки + отсрочка. 0 — срок вручную.</span></label>' +
+    '<div class="field"><span>Режим оплаты</span><div class="mode-options">' +
+    '<label><input type="checkbox" id="scPrepayment"> Предоплата</label>' +
+    '<label><input type="checkbox" id="scRealization"> Реализация</label></div>' +
+    '<span class="hint">При выбранном режиме отсрочка неактивна.</span></div>' +
+    '<label class="field full"><span class="check-row"><input type="checkbox" id="scArchived"> В архиве (скрывать из списков, историю сохранить)</span></label>' +
+    '</div><div class="modal-actions entity-actions">' +
+    '<button class="btn btn-danger" id="scDelete">Удалить</button><span class="spacer"></span>' +
     '<button class="btn" id="scClose">Закрыть</button>' +
-    '<button class="btn" id="scOpen">Операции и долги →</button>' +
-    '<button class="btn btn-success" id="scAdd">＋ Добавить поставщика</button>' +
-    '<button class="btn btn-primary" id="scSave">Сохранить</button></div>');
+    '<button class="btn" id="scOpen">Операции и долги</button>' +
+    '<button class="btn btn-success" id="scAdd">＋ Добавить</button>' +
+    '<button class="btn btn-primary" id="scSave">Сохранить</button></div>', true);
   const syncSupplierMode = bindSupplierModeControls($('#scPrepayment', modal), $('#scRealization', modal), $('#scDeferral', modal));
   const fill = () => {
     const sup = supplierById($('#scSelect', modal).value);
     const has = !!sup;
+    $('#scName', modal).value = has ? sup.name : '';
+    $('#scName', modal).disabled = !has;
     $('#scDeferral', modal).value = has ? (sup.deferral_days || 0) : 0;
     $('#scPrepayment', modal).checked = has ? !!sup.prepayment : false;
     $('#scRealization', modal).checked = has ? !!sup.on_realization : false;
@@ -1165,14 +1185,15 @@ async function supplierCardModal() {
     const sup = supplierById(id);
     if (!sup) { formError(modal, 'Выберите поставщика.'); return; }
     const payload = {
-      // Наименование и ранее сохранённое примечание в карточке не редактируются.
-      name: sup.name,
+      name: $('#scName', modal).value.trim(),
       deferral_days: parseInt($('#scDeferral', modal).value, 10) || 0,
+      // Поля примечания в карточке нет; ранее сохранённый текст не стираем.
       note: sup.note || '',
       prepayment: $('#scPrepayment', modal).checked,
       on_realization: $('#scRealization', modal).checked,
       archived: $('#scArchived', modal).checked,
     };
+    if (!payload.name) { formError(modal, 'Укажите наименование поставщика.'); $('#scName', modal).focus(); return; }
     try {
       await api('/api/suppliers/' + encodeURIComponent(id), {method: 'PUT', json: payload});
       toast('Карточка поставщика сохранена', 'ok');
@@ -1202,16 +1223,16 @@ async function buyerCardModal(selectedId) {
   const list = state.buyers || [];
   const options = list.map((b) => '<option value="' + esc(b.id) + '"' +
     (b.id === selectedId ? ' selected' : '') + '>' + esc(b.name) + '</option>').join('');
-  const modal = openModal('<h3>🛒 Карточка покупателя</h3><div class="form-grid">' +
+  const modal = openModal('<h3>🛒 Карточка покупателя</h3><div class="form-grid entity-card-form">' +
     '<label class="field full">Покупатель <select id="bcSelect">' + options + '</select>' +
     (list.length ? '' : '<span class="hint">Покупателей пока нет — добавьте первого кнопкой ниже.</span>') + '</label>' +
     '<label class="field full">Наименование покупателя * <input type="text" id="bcName"></label>' +
     '<label class="field full">Примечание <input type="text" id="bcNote"></label>' +
-    '</div><div class="modal-actions">' +
-    '<button class="btn btn-danger" id="bcDelete" style="margin-right:auto">Удалить покупателя</button>' +
+    '</div><div class="modal-actions entity-actions">' +
+    '<button class="btn btn-danger" id="bcDelete">Удалить</button><span class="spacer"></span>' +
     '<button class="btn" id="bcClose">Закрыть</button>' +
-    '<button class="btn btn-success" id="bcAdd">＋ Добавить покупателя</button>' +
-    '<button class="btn btn-primary" id="bcSave">Сохранить</button></div>');
+    '<button class="btn btn-success" id="bcAdd">＋ Добавить</button>' +
+    '<button class="btn btn-primary" id="bcSave">Сохранить</button></div>', true);
   const fill = () => {
     const buy = buyerById($('#bcSelect', modal).value);
     const has = !!buy;

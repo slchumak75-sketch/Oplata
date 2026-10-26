@@ -90,6 +90,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /api/backup.json", s.handleBackup)
 	mux.HandleFunc("POST /api/restore", s.handleRestore)
 	mux.HandleFunc("POST /api/reset", s.handleReset)
+	mux.HandleFunc("POST /api/clear-amounts", s.handleClearAmounts)
 	mux.HandleFunc("/", s.handleStatic)
 	return s.guard(mux)
 }
